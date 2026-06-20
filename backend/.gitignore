@@ -1,0 +1,44 @@
+# ============================================================
+# Backend .gitignore
+# ============================================================
+
+# Node modules
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build
+dist/
+build/
+
+# Coverage
+coverage/
+
+# Temporary
+tmp/
+temp/
+
+# Redis dump
+dump.rdb
+
+# Database
+*.sqlite
+*.db
+*.sqlite3

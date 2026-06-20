@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    @apply bg-surface-950 text-white font-body antialiased;
+    background-image: radial-gradient(at 40% 20%, hsla(250,100%,65%,0.06) 0px, transparent 50%),
+                      radial-gradient(at 80% 0%,  hsla(280,100%,70%,0.04) 0px, transparent 50%),
+                      radial-gradient(at 0%  50%, hsla(190,100%,65%,0.03) 0px, transparent 50%);
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-brand-700/50 rounded-full; }
+}
+
+@layer components {
+  /* Glassmorphism card */
+  .card-glass {
+    @apply bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)];
+  }
+
+  /* Neon glow variants */
+  .glow-sm    { box-shadow: 0 0 15px rgba(99,102,241,0.25); }
+  .glow-md    { box-shadow: 0 0 30px rgba(99,102,241,0.35); }
+  .glow-brand { box-shadow: 0 0 25px rgba(99,102,241,0.5); }
+
+  /* Gradient text */
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-brand-400 via-purple-400 to-pink-400;
+  }
+  .text-gradient-cyan {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-brand-400;
+  }
+
+  /* Input base */
+  .input-base {
+    @apply w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white
+           placeholder-slate-600 focus:outline-none focus:border-brand-500/50 focus:bg-brand-500/5 transition-all;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply flex items-center justify-center gap-2 bg-gradient-to-r from-brand-600 to-purple-600
+           hover:from-brand-500 hover:to-purple-500 text-white font-semibold rounded-xl
+           transition-all shadow-lg shadow-brand-900/40 disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10
+           text-slate-300 hover:bg-white/5 hover:text-white transition-all;
+  }
+
+  /* Scrollbar hide */
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Stat card */
+  .stat-card {
+    @apply card-glass rounded-2xl p-5 transition-all duration-300 hover:border-brand-500/20 hover:glow-sm;
+  }
+}

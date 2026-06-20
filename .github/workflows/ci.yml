@@ -1,0 +1,83 @@
+name: Universal API Hub CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: your_db_password
+          POSTGRES_DB: universal_api_hub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: |
+          backend/package-lock.json
+          frontend/package-lock.json
+
+    - name: Install Dependencies
+      run: |
+        cd backend && npm ci
+        cd ../frontend && npm ci
+
+    - name: Mandatory Lint
+      run: |
+        cd backend && npm run lint
+        cd ../frontend && npm run lint
+
+    - name: Mandatory Security Audit
+      run: |
+        cd backend && npm audit --audit-level=high
+        cd ../frontend && npm audit --audit-level=high
+
+    - name: Build Frontend
+      run: |
+        cd frontend && npm run build
+
+    - name: Backend Tests & Coverage
+      run: |
+        cd backend && npm test -- --coverage --passWithNoTests=false
+
+    - name: Frontend Tests
+      run: |
+        cd frontend && npm test -- --coverage --passWithNoTests=false
+
+    - name: Docker Compose Validation
+      run: |
+        docker compose build
+
+    - name: Database Migration Check
+      run: |
+        cd backend && node scripts/migrate.js
