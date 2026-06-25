@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { dashboardService } from '../services/auth';
 import StatsCards from '../components/dashboard/StatsCards';
@@ -105,7 +105,7 @@ function MiniPlayground({ userApiKey }) {
   );
 }
 
-// ✅ FIXED: Upgrade Modal with Direct Plan Selection
+// Upgrade Modal with Direct Plan Selection
 function UpgradeModal({ plan, onClose, onUpgrade }) {
   const opts = [
     { key: 'pro', label: 'Pro', price: 'Free Beta', limit: '50 req/day, 8 APIs', color: 'from-brand-600 to-indigo-600' },
@@ -150,45 +150,56 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [upgradeModal, setUpgradeModal] = useState(false);
+  const loadCalled = useRef(false);
 
   const plan = user?.plan || 'free';
   const planCfg = PLANS[plan] || PLANS.free;
   const userApiKey = data?.apiKeys?.[0]?.key_prefix ? data.apiKeys[0].key_prefix + '...' : '';
 
+  // Fixed load function - uses ref to prevent multiple calls
   const load = useCallback(async () => {
+    // Prevent multiple simultaneous loads
+    if (loadCalled.current) return;
+    loadCalled.current = true;
+
     setLoading(true);
     try {
       const [dash, usage] = await Promise.all([
-        dashboardService.getDashboard(),
+        dashboardService.getDashboard().catch(() => ({})),
         dashboardService.getUsage().catch(() => ({})),
       ]);
       setData({ ...dash, usage });
     } catch (err) {
-      showToast('Failed to load dashboard data', 'error');
+      // Only show error if not 401 (unauthorized)
+      if (err.response?.status !== 401) {
+        showToast('Failed to load dashboard data', 'error');
+      }
     } finally {
       setLoading(false);
+      loadCalled.current = false;
     }
   }, [showToast]);
 
+  // Load once on mount
   useEffect(() => {
     load();
-  }, [load]);
+    // Cleanup to prevent memory leaks
+    return () => {
+      loadCalled.current = false;
+    };
+  }, []); // Empty dependency array = run once
 
-  // ✅ FIXED: Use direct plan selection instead of Stripe
+  // Handle upgrade
   const handleUpgrade = async (targetPlan) => {
     try {
-      // Try direct plan selection first (no payment)
       const result = await dashboardService.selectPlan(targetPlan);
       showToast(`🎉 Upgraded to ${targetPlan} plan successfully!`);
-      // Update user context
       if (result.user) {
         updateUser({ plan: targetPlan });
       }
-      // Reload dashboard
       await load();
       setUpgradeModal(false);
     } catch (err) {
-      // If direct selection fails, try Stripe checkout as fallback
       try {
         const { url } = await dashboardService.createCheckoutSession(targetPlan);
         if (url) {

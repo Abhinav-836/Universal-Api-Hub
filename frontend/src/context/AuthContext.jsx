@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { authService } from '../services/auth';
 
 const AuthContext = createContext(null);
@@ -7,37 +7,52 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authAttempts, setAuthAttempts] = useState(0);
+  const initCalled = useRef(false);
 
   // Rehydrate session on mount via HttpOnly cookie
   useEffect(() => {
     let mounted = true;
     let retryCount = 0;
-    const maxRetries = 3;
-    const delay = 2000; // 2 seconds
+    const maxRetries = 2;
+    const delay = 1000;
 
     const init = async () => {
+      // Prevent multiple simultaneous initialization attempts
+      if (initCalled.current) return;
+      initCalled.current = true;
+
       try {
         const data = await authService.me();
-        if (mounted) setUser(data?.user ?? null);
+        if (mounted) {
+          setUser(data?.user ?? null);
+          setAuthAttempts(0);
+        }
       } catch (err) {
-        // If rate limited, retry after delay
+        // Only retry on 429 rate limiting, NOT on 401
         if (err.response?.status === 429 && retryCount < maxRetries) {
           retryCount++;
           console.log(`Rate limited, retry ${retryCount} in ${delay}ms...`);
           setTimeout(init, delay);
           return;
         }
-        if (mounted) setUser(null);
+        // For 401 or other errors, just set user to null (not logged in)
+        if (mounted) {
+          setUser(null);
+        }
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          setLoading(false);
+          initCalled.current = false;
+        }
       }
     };
-    
-    // Add a small delay before initial load to prevent rate limiting
-    const timeoutId = setTimeout(init, 500);
+
+    // Small delay before initial load
+    const timeoutId = setTimeout(init, 300);
     return () => {
       mounted = false;
       clearTimeout(timeoutId);
+      initCalled.current = false;
     };
   }, []);
 
@@ -67,6 +82,7 @@ export const AuthProvider = ({ children }) => {
   const logout = useCallback(() => {
     authService.logout();
     setUser(null);
+    setAuthAttempts(0);
   }, []);
 
   const updateUser = useCallback((updates) => {
