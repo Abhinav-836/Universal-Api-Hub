@@ -1,51 +1,97 @@
+// frontend/src/services/auth.js
 import api from './api';
 
-// Simple delay function
+// Simple delay function for development (remove in production)
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const authService = {
   register: async (data) => {
-    await delay(300);
+    // ✅ Only delay in development
+    if (import.meta.env.DEV) await delay(300);
+    
     const response = await api.post('/auth/register', data);
-    // Store token in localStorage as fallback
+    
+    // ✅ Store token in localStorage if provided (for future requests)
     if (response.data.token) {
       localStorage.setItem('auth_token', response.data.token);
     }
+    
     return response.data;
   },
   
   login: async (data) => {
-    await delay(300);
+    // ✅ Only delay in development
+    if (import.meta.env.DEV) await delay(300);
+    
     const response = await api.post('/auth/login', data);
-    // Store token in localStorage as fallback
+    
+    // ✅ Store token in localStorage for Authorization header
     if (response.data.token) {
       localStorage.setItem('auth_token', response.data.token);
+      console.log('✅ Token stored in localStorage');
+    } else {
+      console.warn('⚠️ No token returned from login response');
     }
+    
+    // ✅ Return full response including user data
     return response.data;
   },
   
   logout: async () => {
     try {
+      // ✅ Attempt to logout on server (clears cookie)
       await api.post('/auth/logout');
-    } catch (_) {}
-    localStorage.removeItem('auth_token');
+      console.log('✅ Server logout successful');
+    } catch (error) {
+      // ✅ Log error but don't fail - we still clear local storage
+      console.warn('⚠️ Server logout failed:', error.message);
+    } finally {
+      // ✅ Always clear local storage
+      localStorage.removeItem('auth_token');
+      console.log('✅ Local storage cleared');
+    }
   },
   
   me: async () => {
-    await delay(200);
+    // ✅ Only delay in development
+    if (import.meta.env.DEV) await delay(200);
+    
     try {
       const response = await api.get('/auth/me');
-      return response.data;
+      
+      // ✅ Token is still valid, return user data
+      if (response.data.success) {
+        return response.data;
+      }
+      
+      // ✅ If response indicates failure, throw error
+      throw new Error(response.data.error || 'Failed to get user data');
+      
     } catch (error) {
-      // If 401, clear stored token
+      // ✅ If 401, clear stored token (it's invalid/expired)
       if (error.response?.status === 401) {
         localStorage.removeItem('auth_token');
+        console.log('🔄 Token removed due to 401 response');
       }
+      
+      // ✅ Re-throw for the AuthProvider to handle
       throw error;
     }
   },
+  
+  // ✅ Helper to check if user is authenticated
+  isAuthenticated: () => {
+    const token = localStorage.getItem('auth_token');
+    return !!token;  // Returns true if token exists
+  },
+  
+  // ✅ Helper to get current token (for debugging)
+  getToken: () => {
+    return localStorage.getItem('auth_token');
+  }
 };
 
+// ✅ Dashboard service functions (unchanged but kept for completeness)
 export const dashboardService = {
   getDashboard: async () => {
     const response = await api.get('/api/user/dashboard');
@@ -76,6 +122,7 @@ export const dashboardService = {
       const response = await api.post('/api/user/checkout', { plan });
       return response.data;
     } catch (err) {
+      // ✅ Fallback to select-plan if checkout fails
       const response = await api.post('/api/user/select-plan', { plan });
       return response.data;
     }
