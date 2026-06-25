@@ -7,7 +7,7 @@ const authRoutes = require('./routes/auth.routes');
 const apiRoutes = require('./routes/api.routes');
 const userRoutes = require('./routes/user.routes');
 const { errorHandler } = require('./middleware/errorHandler');
-const { requestLogger } = require('./utils/logger');
+const { requestLogger } = require('./middleware/logger');
 
 const app = express();
 
