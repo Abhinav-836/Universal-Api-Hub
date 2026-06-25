@@ -24,22 +24,45 @@ app.use(helmet({
       scriptSrc:  ["'self'"],
       styleSrc:   ["'self'", "'unsafe-inline'"],
       imgSrc:     ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", 'https://universal-api-hub.onrender.com', 'https://universal-api-hub.vercel.app'],
     },
   },
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
   frameguard: { action: 'deny' },
   referrerPolicy: { policy: 'same-origin' }
 }));
 
-// ── CORS ──────────────────────────────────────────────────────
+// ── CORS (FIXED) ──────────────────────────────────────────────
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5000',
+  'https://universal-api-hub.vercel.app',
+  process.env.FRONTEND_URL,
+].filter(Boolean); // Remove undefined values
+
 app.use(cors({
-  origin:         process.env.FRONTEND_URL || 'http://localhost:3000',
-  methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn('❌ CORS blocked for origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
   exposedHeaders: [
-    'X-RateLimit-Limit', 'X-RateLimit-Remaining',
-    'X-RateLimit-Used',  'X-RateLimit-Reset', 'X-RateLimit-Warning',
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Used',
+    'X-RateLimit-Reset',
+    'X-RateLimit-Warning',
   ],
   credentials: true,
 }));
