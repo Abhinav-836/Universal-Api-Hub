@@ -7,15 +7,29 @@ const { jwtAuth } = require('../middleware/auth.middleware');
 
 const router = express.Router();
 
-// Strict per-IP limiter for auth endpoints — prevents credential stuffing / brute force
-// 10 attempts per 15 min per IP; failed requests are counted (skipSuccessfulRequests)
+// Less strict limiter for production - 20 attempts per 15 min
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
+  max: 20, // Increased from 10 to 20
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true, // only count failed attempts toward the limit
-  message: { success: false, error: 'Too many authentication attempts. Try again in 15 minutes.' },
+  skipSuccessfulRequests: true,
+  message: { 
+    success: false, 
+    error: 'Too many authentication attempts. Please wait 15 minutes.' 
+  },
+});
+
+// Even less strict for /me endpoint
+const meLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { 
+    success: false, 
+    error: 'Too many requests. Please wait a moment.' 
+  },
 });
 
 router.post('/register',
@@ -38,7 +52,9 @@ router.post('/login',
   AuthController.login
 );
 
-router.get('/me', jwtAuth, AuthController.me);
+// /me endpoint - less restrictive rate limit
+router.get('/me', meLimiter, jwtAuth, AuthController.me);
+
 router.post('/logout', AuthController.logout);
 router.post('/refresh', jwtAuth, AuthController.refresh);
 

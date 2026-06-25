@@ -1,131 +1,165 @@
-// backend/src/app.js
-require('dotenv').config();
-const express     = require('express');
-const helmet      = require('helmet');
-const cors        = require('cors');
-const compression = require('compression');
-const morgan      = require('morgan');
-const logger      = require('./utils/logger');
-const { ipRateLimit } = require('./middleware/rateLimiter');
-const authRoutes  = require('./routes/auth.routes');
-const userRoutes  = require('./routes/user.routes');
-const apiRoutes   = require('./routes/api.routes');
+const express = require('express');
+const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const authRoutes = require('./routes/auth');
+const apiRoutes = require('./routes/api');
+const userRoutes = require('./routes/user');
+const { errorHandler } = require('./middleware/errorHandler');
+const { requestLogger } = require('./middleware/logger');
 
 const app = express();
 
-// ── Trust proxy (for correct req.ip behind nginx) ─────────────
-app.set('trust proxy', 1);
-
-// ── Security headers ─────────────────────────────────────────
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'"],
-      styleSrc:   ["'self'", "'unsafe-inline'"],
-      imgSrc:     ["'self'", 'data:', 'https:'],
-      // ✅ FIXED: .com not .app
-      connectSrc: ["'self'", 'https://universal-api-hub.onrender.com', 'https://universal-api-hub.vercel.app'],
-    },
-  },
-  crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
-  frameguard: { action: 'deny' },
-  referrerPolicy: { policy: 'same-origin' }
-}));
-
-// ── CORS ──────────────────────────────────────────────────────
+// ==================== CORS CONFIGURATION ====================
 const allowedOrigins = [
+  'https://universal-api-hub.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173',
-  'http://localhost:5000',
-  'https://universal-api-hub.vercel.app',
   process.env.FRONTEND_URL,
+  process.env.CORS_ORIGIN
 ].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
       callback(null, true);
     } else {
-      console.warn('❌ CORS blocked for origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-API-Key',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Headers',
+    'Access-Control-Allow-Credentials'
+  ],
   exposedHeaders: [
     'X-RateLimit-Limit',
     'X-RateLimit-Remaining',
     'X-RateLimit-Used',
     'X-RateLimit-Reset',
-    'X-RateLimit-Warning',
+    'X-RateLimit-Warning'
   ],
-  credentials: true,  // ✅ MUST be true
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
-// ── Stripe Webhook ──────────────────────────────────────────────
-const UserController = require('./controllers/user.controller');
-app.post('/webhook/stripe', express.raw({ type: 'application/json' }), UserController.stripeWebhook);
-
-// ── Body parsing & compression ────────────────────────────────
-app.use(compression());
-
-// Allow 5MB payloads specifically for image analysis routes
-app.use('/api/v1/image/analyze', express.json({ limit: '5mb' }));
-app.use('/api/v1/image/analyze', express.urlencoded({ extended: true, limit: '5mb' }));
-
-// Apply strict 100kb limit globally to all other routes
-app.use(express.json({ limit: '100kb' })); 
-app.use(express.urlencoded({ extended: true, limit: '100kb' }));
-
-// ── HTTP request logging ──────────────────────────────────────
-app.use(morgan('combined', {
-  stream: { write: (msg) => logger.info(msg.trim(), { type: 'http' }) },
-  skip: (req) => req.path === '/health',
+// ==================== SECURITY HEADERS ====================
+app.use(helmet({
+  crossOriginOpenerPolicy: { policy: "same-origin" },
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: [
+        "'self'",
+        "https://universal-api-hub.onrender.com",
+        "https://universal-api-hub.vercel.app",
+        ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : [])
+      ],
+      baseUri: ["'self'"],
+      fontSrc: ["'self'", "https:", "data:"],
+      formAction: ["'self'"],
+      frameAncestors: ["'self'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: []
+    }
+  }
 }));
 
-// ── Global IP abuse protection ────────────────────────────────
-app.use(ipRateLimit);
+// ==================== MIDDLEWARE ====================
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
+app.use(requestLogger);
 
-// ── Health check ──────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({
-  status:    'ok',
-  service:   'Universal API Hub',
-  version:   '1.0.0',
-  env:       process.env.NODE_ENV,
-  timestamp: new Date().toISOString(),
-}));
+// ==================== RATE LIMITING ====================
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: (req) => {
+    // Higher limit for authenticated users in production
+    if (process.env.NODE_ENV === 'production') {
+      return req.user ? 500 : 200;
+    }
+    return 1000; // Development
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Use session ID or user ID if available, fallback to IP
+    return req.user?.id || req.sessionID || req.ip;
+  },
+  skip: (req) => {
+    // Skip rate limiting for health checks
+    return req.path === '/health' || req.path === '/';
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      error: 'Too many requests, please try again later.',
+      retryAfter: Math.ceil(req.rateLimit.resetTime / 1000)
+    });
+  }
+});
 
-// ── Routes ────────────────────────────────────────────────────
-app.use('/auth',     authRoutes);
-app.use('/api/user', userRoutes);
-app.use('/api',      apiRoutes);
+app.use('/api', limiter);
+app.use('/auth', limiter);
 
-// ── 404 handler ───────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error:   `Route not found: ${req.method} ${req.path}`,
+// ==================== COOKIE PARSER OPTIONS ====================
+// This is important for cross-domain cookie handling
+app.use((req, res, next) => {
+  // Ensure cookies are parsed
+  next();
+});
+
+// ==================== ROUTES ====================
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Universal API Hub API',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
   });
 });
 
-// ── Global error handler ──────────────────────────────────────
-app.use((err, req, res, _next) => {
-  logger.error('Unhandled error', {
-    error:  err.message,
-    stack:  process.env.NODE_ENV !== 'production' ? err.stack : undefined,
-    url:    req.originalUrl,
-    method: req.method,
-    ip:     req.ip,
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
   });
+});
 
-  const status = err.statusCode || err.status || 500;
-  res.status(status).json({
-    success: false,
-    error:   process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
+// Auth routes (public)
+app.use('/auth', authRoutes);
+
+// API routes (protected)
+app.use('/api', apiRoutes);
+app.use('/api/user', userRoutes);
+
+// ==================== ERROR HANDLING ====================
+app.use(errorHandler);
+
+// ==================== 404 HANDLER ====================
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Route not found',
+    path: req.path,
+    method: req.method
   });
 });
 
