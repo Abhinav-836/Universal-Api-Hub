@@ -5,44 +5,42 @@ const API_BASE = import.meta.env.VITE_API_BASE || '';
 const api = axios.create({
   baseURL: API_BASE,
   timeout: 15000,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  },
   withCredentials: true,
 });
 
-// Track request count for rate limiting
-let requestCount = 0;
-let lastResetTime = Date.now();
-
-// Reset counter every 60 seconds
-setInterval(() => {
-  requestCount = 0;
-  lastResetTime = Date.now();
-}, 60000);
-
-// Add request interceptor to track rate
+// Add token to headers if available (fallback for cookie)
 api.interceptors.request.use((config) => {
-  requestCount++;
-  // console.log(`Request ${requestCount} to ${config.url}`);
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
 
-// Redirect to login on 401 (unless already on auth pages)
+// Response interceptor
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
-    // Handle rate limiting gracefully
-    if (err.response?.status === 429) {
-      console.warn('Rate limited. Waiting 5 seconds...');
-      // Don't redirect on 429, just reject
-      return Promise.reject(err);
-    }
-    
+  async (err) => {
+    // Handle 401 Unauthorized
     if (err.response?.status === 401) {
       const path = window.location.pathname;
-      if (path !== '/login' && path !== '/signup' && path !== '/') {
+      if (!['/login', '/signup', '/'].includes(path)) {
+        localStorage.removeItem('auth_token');
+        // Only redirect if not already on auth pages
         window.location.href = '/login';
       }
     }
+    
+    // Handle 429 Rate Limiting
+    if (err.response?.status === 429) {
+      console.warn('Rate limited. Waiting before retry...');
+      // Could show a toast notification here
+    }
+    
     return Promise.reject(err);
   }
 );

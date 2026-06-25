@@ -8,36 +8,40 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [authAttempts, setAuthAttempts] = useState(0);
   const initCalled = useRef(false);
+  const initTimeout = useRef(null);
 
-  // Rehydrate session on mount via HttpOnly cookie
   useEffect(() => {
     let mounted = true;
     let retryCount = 0;
-    const maxRetries = 2;
-    const delay = 1000;
+    const maxRetries = 3;
+    const delay = 2000;
 
     const init = async () => {
-      // Prevent multiple simultaneous initialization attempts
       if (initCalled.current) return;
       initCalled.current = true;
 
       try {
         const data = await authService.me();
-        if (mounted) {
-          setUser(data?.user ?? null);
+        if (mounted && data?.user) {
+          setUser(data.user);
           setAuthAttempts(0);
         }
       } catch (err) {
-        // Only retry on 429 rate limiting, NOT on 401
+        // Only retry on 429 rate limiting
         if (err.response?.status === 429 && retryCount < maxRetries) {
           retryCount++;
-          console.log(`Rate limited, retry ${retryCount} in ${delay}ms...`);
-          setTimeout(init, delay);
+          console.log(`Rate limited, retry ${retryCount}/${maxRetries} in ${delay}ms...`);
+          clearTimeout(initTimeout.current);
+          initTimeout.current = setTimeout(() => {
+            initCalled.current = false;
+            init();
+          }, delay);
           return;
         }
-        // For 401 or other errors, just set user to null (not logged in)
+        // For 401 or other errors, set user to null
         if (mounted) {
           setUser(null);
+          localStorage.removeItem('auth_token');
         }
       } finally {
         if (mounted) {
@@ -47,11 +51,12 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    // Small delay before initial load
-    const timeoutId = setTimeout(init, 300);
+    const timeoutId = setTimeout(init, 500);
+    
     return () => {
       mounted = false;
       clearTimeout(timeoutId);
+      clearTimeout(initTimeout.current);
       initCalled.current = false;
     };
   }, []);
@@ -83,6 +88,7 @@ export const AuthProvider = ({ children }) => {
     authService.logout();
     setUser(null);
     setAuthAttempts(0);
+    localStorage.removeItem('auth_token');
   }, []);
 
   const updateUser = useCallback((updates) => {
