@@ -26,7 +26,7 @@ const getCurrentSwitchCount = (user) => {
 };
 
 const UserController = {
-  /** GET /user/dashboard — full dashboard data */
+  // ==================== DASHBOARD ====================
   getDashboard: async (req, res) => {
     try {
       const userId = req.user.id;
@@ -63,7 +63,6 @@ const UserController = {
     }
   },
 
-  /** GET /user/usage */
   getUsage: async (req, res) => {
     try {
       const [usage, stats, breakdown] = await Promise.all([
@@ -77,10 +76,7 @@ const UserController = {
     }
   },
 
-  /**
-   * 🆕 SELECT PLAN - User can freely choose their plan
-   * This replaces the Stripe checkout for now
-   */
+  // ==================== PLAN MANAGEMENT ====================
   selectPlan: async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -91,7 +87,6 @@ const UserController = {
       const { plan } = req.body;
       const userId = req.user.id;
 
-      // Validate plan
       const validPlans = ['free', 'pro', 'premium'];
       if (!validPlans.includes(plan)) {
         return res.status(400).json({ 
@@ -100,20 +95,16 @@ const UserController = {
         });
       }
 
-      // Update user's plan
       const updatedUser = await UserModel.updatePlan(userId, plan);
 
-      // If upgrading to premium, auto-grant all APIs
       if (plan === 'premium') {
         const allApis = await ApiModel.findAll();
         await Promise.all(allApis.map(api => ApiModel.grantAccess(userId, api.id)));
         
-        // Clear cache
         const redis = getRedis();
         await redis.del(KEYS.userApisCache(userId)).catch(() => {});
       }
 
-      // Clear user cache
       const redis = getRedis();
       await redis.del(KEYS.userCache(userId)).catch(() => {});
 
@@ -133,20 +124,15 @@ const UserController = {
     }
   },
 
-  /**
-   * 🆕 GET PLAN INFO - Returns all plan details
-   */
   getPlans: async (req, res) => {
     try {
       const currentPlan = req.user?.plan || 'free';
-      
-      // Get all available APIs grouped by plan
       const allApis = await ApiModel.findAll();
       
       const plans = Object.keys(PLANS).map(planKey => {
         const planData = PLANS[planKey];
+        const planOrder = { free: 0, pro: 1, premium: 2 };
         const apisForPlan = allApis.filter(api => {
-          const planOrder = { free: 0, pro: 1, premium: 2 };
           return planOrder[api.min_plan] <= planOrder[planKey];
         });
         
@@ -163,7 +149,6 @@ const UserController = {
             name: api.name,
             description: api.description,
           })),
-          // Additional plan info
           alphaVantageCallsPerMin: planData.alphaVantageCallsPerMin || 5,
           yahooFinanceCallsPerMin: planData.yahooFinanceCallsPerMin || 10,
           llmModels: planData.llmModels || [],
@@ -183,7 +168,46 @@ const UserController = {
     }
   },
 
-  /** POST /user/apis/select — select an API */
+  getPlanFeatures: async (req, res) => {
+    try {
+      const allApis = await ApiModel.findAll();
+      const planOrder = { free: 0, pro: 1, premium: 2 };
+      
+      const features = {};
+      
+      Object.keys(PLANS).forEach(planKey => {
+        const planData = PLANS[planKey];
+        const apisForPlan = allApis.filter(api => {
+          return planOrder[api.min_plan] <= planOrder[planKey];
+        });
+        
+        features[planKey] = {
+          name: planData.name,
+          dailyRequests: planData.dailyLimit,
+          apiSlots: planData.apiSlots === Infinity ? 'Unlimited' : planData.apiSlots,
+          apiSwitches: planData.switchesPerDay === Infinity ? 'Unlimited' : planData.switchesPerDay,
+          availableApis: apisForPlan.map(api => api.name),
+          apiCount: apisForPlan.length,
+          rateLimits: {
+            alphaVantage: `${planData.alphaVantageCallsPerMin || 5} calls/min`,
+            yahooFinance: `${planData.yahooFinanceCallsPerMin || 10} calls/min`,
+          },
+          llmModels: planData.llmModels || [],
+        };
+      });
+
+      res.json({
+        success: true,
+        features,
+        currentPlan: req.user?.plan || 'free',
+      });
+    } catch (err) {
+      logger.error('Get plan features error', { error: err.message });
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+
+  // ==================== API SELECTION ====================
   selectApi: async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() });
@@ -194,7 +218,6 @@ const UserController = {
       const plan   = req.user.plan;
       const planConfig = PLANS[plan];
 
-      // Premium users don't need to select
       if (plan === 'premium') {
         return res.status(400).json({ 
           success: false, 
@@ -202,7 +225,6 @@ const UserController = {
         });
       }
 
-      // Check slot limit
       const currentCount = await ApiModel.countUserApis(userId);
       if (currentCount >= planConfig.apiSlots) {
         return res.status(403).json({
@@ -212,7 +234,6 @@ const UserController = {
         });
       }
 
-      // Check switch limit
       const user = await UserModel.findById(userId);
       const currentSwitches = getCurrentSwitchCount(user);
 
@@ -223,7 +244,6 @@ const UserController = {
         });
       }
 
-      // Verify the API exists and user's plan can access it
       const api = await ApiModel.findById(apiId);
       if (!api) return res.status(404).json({ success: false, error: 'API not found' });
 
@@ -239,7 +259,6 @@ const UserController = {
       await ApiModel.grantAccess(userId, apiId);
       await UserModel.incrementSwitchCount(userId);
 
-      // Invalidate cache
       const redis = getRedis();
       await redis.del(KEYS.userApisCache(userId)).catch(() => {});
 
@@ -250,7 +269,6 @@ const UserController = {
     }
   },
 
-  /** DELETE /user/apis/:apiId — deselect an API */
   deselectApi: async (req, res) => {
     try {
       const { apiId } = req.params;
@@ -281,14 +299,93 @@ const UserController = {
     }
   },
 
-  /** POST /user/checkout — Stripe checkout (conditional) */
+  getApis: async (req, res) => {
+    try {
+      const [allApis, userApis] = await Promise.all([
+        ApiModel.findAll(),
+        ApiModel.findUserApis(req.user.id),
+      ]);
+      const userApiIds = new Set(userApis.map(a => a.id));
+      const planOrder = { free: 0, pro: 1, premium: 2 };
+      const userPlanLevel = planOrder[req.user.plan] ?? 0;
+
+      const apis = allApis.map(api => ({
+        ...api,
+        selected: userApiIds.has(api.id),
+        accessible: planOrder[api.min_plan] <= userPlanLevel,
+        locked: planOrder[api.min_plan] > userPlanLevel,
+      }));
+
+      res.json({ success: true, apis, planConfig: PLANS[req.user.plan] });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+
+  // ==================== API KEY MANAGEMENT ====================
+  listKeys: async (req, res) => {
+    try {
+      const keys = await ApiKeyService.listForUser(req.user.id);
+      res.json({ success: true, keys });
+    } catch (err) {
+      logger.error('List keys error', { error: err.message });
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+
+  createKey: async (req, res) => {
+    try {
+      const { label, keyType, scopedApis, expiresAt } = req.body;
+      
+      const key = await ApiKeyService.create({
+        userId: req.user.id,
+        label: label || 'My Key',
+        keyType: keyType || 'dev',
+        scopedApis: Array.isArray(scopedApis) && scopedApis.length ? scopedApis : null,
+        expiresAt: expiresAt || null,
+      });
+      
+      res.status(201).json({
+        success: true,
+        message: '⚠ Store the rawKey securely — it will NOT be shown again.',
+        key,
+      });
+    } catch (err) {
+      logger.error('Create key error', { error: err.message });
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  },
+
+  revokeKey: async (req, res) => {
+    try {
+      const { keyId } = req.params;
+      await ApiKeyService.revoke(keyId, req.user.id);
+      res.json({ success: true, message: 'API key revoked successfully' });
+    } catch (err) {
+      logger.error('Revoke key error', { error: err.message });
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  },
+
+  updateKeyScopes: async (req, res) => {
+    try {
+      const { keyId } = req.params;
+      const { scopedApis } = req.body;
+      
+      const updated = await ApiKeyService.updateScopes(keyId, req.user.id, scopedApis);
+      res.json({ success: true, key: updated });
+    } catch (err) {
+      logger.error('Update key scopes error', { error: err.message });
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  },
+
+  // ==================== STRIPE CHECKOUT ====================
   createCheckoutSession: async (req, res) => {
     try {
       const { plan } = req.body;
       
-      // If Stripe is not configured, use the free plan selection instead
       if (!stripe) {
-        // Redirect to plan selection
         return res.status(501).json({
           success: false,
           error: 'Stripe is not configured. Please use the /api/user/select-plan endpoint instead.',
@@ -336,7 +433,6 @@ const UserController = {
     }
   },
 
-  /** POST /webhook/stripe — secure subscription updates */
   stripeWebhook: async (req, res) => {
     try {
       const sig = req.headers['stripe-signature'];
@@ -355,7 +451,6 @@ const UserController = {
         return res.status(400).send(`Webhook Error: ${err.message}`);
       }
 
-      // Idempotency check via Redis
       const redis = getRedis();
       const idempotencyKey = KEYS.webhookEvent(event.id);
       const alreadyProcessed = await redis.set(idempotencyKey, '1', 'NX', 'EX', TTL.ONE_WEEK);
@@ -412,72 +507,6 @@ const UserController = {
     } catch (err) {
       logger.error('Webhook error', { error: err.message, stack: err.stack });
       res.status(500).send(`Webhook Error: Internal failure`);
-    }
-  },
-
-  /** GET /user/apis — all APIs with user's selection status */
-  getApis: async (req, res) => {
-    try {
-      const [allApis, userApis] = await Promise.all([
-        ApiModel.findAll(),
-        ApiModel.findUserApis(req.user.id),
-      ]);
-      const userApiIds = new Set(userApis.map(a => a.id));
-      const planOrder = { free: 0, pro: 1, premium: 2 };
-      const userPlanLevel = planOrder[req.user.plan] ?? 0;
-
-      const apis = allApis.map(api => ({
-        ...api,
-        selected: userApiIds.has(api.id),
-        accessible: planOrder[api.min_plan] <= userPlanLevel,
-        locked: planOrder[api.min_plan] > userPlanLevel,
-      }));
-
-      res.json({ success: true, apis, planConfig: PLANS[req.user.plan] });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  },
-
-  /**
-   * 🆕 GET PLAN FEATURES - Detailed plan comparison
-   */
-  getPlanFeatures: async (req, res) => {
-    try {
-      const allApis = await ApiModel.findAll();
-      const planOrder = { free: 0, pro: 1, premium: 2 };
-      
-      const features = {};
-      
-      Object.keys(PLANS).forEach(planKey => {
-        const planData = PLANS[planKey];
-        const apisForPlan = allApis.filter(api => {
-          return planOrder[api.min_plan] <= planOrder[planKey];
-        });
-        
-        features[planKey] = {
-          name: planData.name,
-          dailyRequests: planData.dailyLimit,
-          apiSlots: planData.apiSlots === Infinity ? 'Unlimited' : planData.apiSlots,
-          apiSwitches: planData.switchesPerDay === Infinity ? 'Unlimited' : planData.switchesPerDay,
-          availableApis: apisForPlan.map(api => api.name),
-          apiCount: apisForPlan.length,
-          rateLimits: {
-            alphaVantage: `${planData.alphaVantageCallsPerMin || 5} calls/min`,
-            yahooFinance: `${planData.yahooFinanceCallsPerMin || 10} calls/min`,
-          },
-          llmModels: planData.llmModels || [],
-        };
-      });
-
-      res.json({
-        success: true,
-        features,
-        currentPlan: req.user?.plan || 'free',
-      });
-    } catch (err) {
-      logger.error('Get plan features error', { error: err.message });
-      res.status(500).json({ success: false, error: err.message });
     }
   },
 };
