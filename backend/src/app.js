@@ -24,6 +24,7 @@ app.use(helmet({
       scriptSrc:  ["'self'"],
       styleSrc:   ["'self'", "'unsafe-inline'"],
       imgSrc:     ["'self'", 'data:', 'https:'],
+      // ✅ FIXED: .com not .app
       connectSrc: ["'self'", 'https://universal-api-hub.onrender.com', 'https://universal-api-hub.vercel.app'],
     },
   },
@@ -34,20 +35,18 @@ app.use(helmet({
   referrerPolicy: { policy: 'same-origin' }
 }));
 
-// ── CORS (FIXED) ──────────────────────────────────────────────
+// ── CORS ──────────────────────────────────────────────────────
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:5000',
   'https://universal-api-hub.vercel.app',
   process.env.FRONTEND_URL,
-].filter(Boolean); // Remove undefined values
+].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
-    
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -64,10 +63,10 @@ app.use(cors({
     'X-RateLimit-Reset',
     'X-RateLimit-Warning',
   ],
-  credentials: true,
+  credentials: true,  // ✅ MUST be true
 }));
 
-// ── Stripe Webhook (must be before body parser for raw body) ──
+// ── Stripe Webhook ──────────────────────────────────────────────
 const UserController = require('./controllers/user.controller');
 app.post('/webhook/stripe', express.raw({ type: 'application/json' }), UserController.stripeWebhook);
 
@@ -101,9 +100,9 @@ app.get('/health', (_req, res) => res.json({
 }));
 
 // ── Routes ────────────────────────────────────────────────────
-app.use('/auth',     authRoutes);   // JWT auth
-app.use('/api/user', userRoutes);   // Dashboard + key mgmt (JWT)
-app.use('/api',      apiRoutes);    // v1 API endpoints (API Key)
+app.use('/auth',     authRoutes);
+app.use('/api/user', userRoutes);
+app.use('/api',      apiRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────
 app.use((req, res) => {

@@ -4,11 +4,12 @@ const AuthService = require('../services/auth.service');
 const UserModel   = require('../models/user.model');
 const logger = require('../utils/logger');
 
+// ✅ Cookie options for cross-domain authentication
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',   // <-- changed from 'strict' to 'lax'
-  maxAge: 7 * 24 * 60 * 60 * 1000,
+  secure: process.env.NODE_ENV === 'production',  // true on Render
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000,  // 7 days
 };
 
 const AuthController = {
@@ -36,10 +37,16 @@ const AuthController = {
       const { email, password } = req.body;
       const result = await AuthService.login({ email, password });
       
-      // Set HttpOnly cookie
+      // ✅ Set HttpOnly cookie with cross-domain options
       res.cookie('jwt', result.token, cookieOptions);
       
-      // Do not send token in JSON response body
+      // Log cookie being set (for debugging)
+      logger.info('Login successful - Cookie set', { 
+        userId: result.user.id,
+        secure: cookieOptions.secure,
+        sameSite: cookieOptions.sameSite,
+      });
+      
       res.json({ success: true, user: result.user });
     } catch (err) {
       logger.error('Login error', { error: err.message });
