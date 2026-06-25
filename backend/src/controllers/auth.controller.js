@@ -4,14 +4,6 @@ const AuthService = require('../services/auth.service');
 const UserModel   = require('../models/user.model');
 const logger = require('../utils/logger');
 
-// ✅ Cookie options for cross-domain authentication
-const cookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',  // true on Render
-  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-  maxAge: 7 * 24 * 60 * 60 * 1000,  // 7 days
-};
-
 const AuthController = {
   register: async (req, res) => {
     const errors = validationResult(req);
@@ -37,14 +29,22 @@ const AuthController = {
       const { email, password } = req.body;
       const result = await AuthService.login({ email, password });
       
-      // ✅ Set HttpOnly cookie with cross-domain options
-      res.cookie('jwt', result.token, cookieOptions);
+      // ✅ FORCE secure and sameSite for production
+      const isProduction = process.env.NODE_ENV === 'production';
       
-      // Log cookie being set (for debugging)
+      res.cookie('jwt', result.token, {
+        httpOnly: true,
+        secure: true,  // ✅ ALWAYS true for Render (HTTPS)
+        sameSite: 'none',  // ✅ ALWAYS 'none' for cross-domain
+        maxAge: 7 * 24 * 60 * 60 * 1000,  // 7 days
+        path: '/',
+      });
+      
       logger.info('Login successful - Cookie set', { 
         userId: result.user.id,
-        secure: cookieOptions.secure,
-        sameSite: cookieOptions.sameSite,
+        secure: true,
+        sameSite: 'none',
+        cookieSet: true,
       });
       
       res.json({ success: true, user: result.user });
@@ -55,7 +55,12 @@ const AuthController = {
   },
 
   logout: async (req, res) => {
-    res.clearCookie('jwt', { ...cookieOptions, maxAge: 0 });
+    res.clearCookie('jwt', {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      path: '/',
+    });
     res.json({ success: true, message: 'Logged out successfully' });
   },
 
@@ -72,7 +77,13 @@ const AuthController = {
   refresh: async (req, res) => {
     try {
       const result = await AuthService.refreshToken(req.user.id);
-      res.cookie('jwt', result.token, cookieOptions);
+      res.cookie('jwt', result.token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: '/',
+      });
       res.json({ success: true });
     } catch (err) {
       res.status(err.statusCode || 500).json({ success: false, error: err.message });
