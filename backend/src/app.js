@@ -6,7 +6,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth.routes');
 const apiRoutes = require('./routes/api.routes');
 const userRoutes = require('./routes/user.routes');
-const { errorHandler } = require('./utils/apiHandler');
+const { errorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./utils/logger');
 
 const app = express();
