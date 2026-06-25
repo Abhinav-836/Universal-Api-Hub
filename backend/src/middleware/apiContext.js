@@ -1,4 +1,4 @@
-const { API_WEIGHTS } = require('../utils/constants');
+const { API_COST_WEIGHTS } = require('../utils/constants');
 
 const attachApiContext = (slug) => (req, _res, next) => {
   req.apiSlug = slug;
