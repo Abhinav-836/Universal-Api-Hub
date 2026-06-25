@@ -3,6 +3,7 @@ const express  = require('express');
 const { body } = require('express-validator');
 const { jwtAuth } = require('../middleware/auth.middleware');
 const UserController = require('../controllers/user.controller');
+// ✅ Import ApiKeyController directly from api.controller
 const { ApiKeyController } = require('../controllers/api.controller');
 
 const router = express.Router();
@@ -15,7 +16,7 @@ router.get('/dashboard', UserController.getDashboard);
 router.get('/usage',     UserController.getUsage);
 router.get('/apis',      UserController.getApis);
 
-// ── 🆕 Plan Management ──────────────────────────────────────
+// ── Plan Management ──────────────────────────────────────
 router.get('/plans', UserController.getPlans);
 router.get('/plan-features', UserController.getPlanFeatures);
 router.post('/select-plan',
@@ -37,6 +38,7 @@ router.post('/checkout',
 );
 
 // ── API Key Management ────────────────────────────────────────
+// ✅ Use ApiKeyController methods
 router.get('/keys',    ApiKeyController.list);
 router.post('/keys',
   [
@@ -47,7 +49,7 @@ router.post('/keys',
   ],
   ApiKeyController.create
 );
-router.delete('/keys/:keyId',        ApiKeyController.revoke);
+router.delete('/keys/:keyId', ApiKeyController.revoke);
 router.patch('/keys/:keyId/scopes', 
   [
     body('scopedApis').isArray({ max: 50 }).withMessage('scopedApis must be an array of max 50 items'),
