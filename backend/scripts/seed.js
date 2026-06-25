@@ -4,7 +4,11 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
-const config = {
+// ✅ Use DATABASE_URL if available, otherwise fallback to individual variables
+const config = process.env.DATABASE_URL ? {
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+} : {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT) || 5432,
   database: process.env.DB_NAME || 'universal_api_hub',
@@ -18,7 +22,17 @@ async function seed() {
   await client.connect();
   console.log('✅ Connected to PostgreSQL');
 
-  const sql = fs.readFileSync(path.join(__dirname, '../../database/seed.sql'), 'utf8');
+  // ✅ Correct path: from scripts/ up to root, then database/seed.sql
+  const seedPath = path.join(__dirname, '../database/seed.sql');
+  
+  if (!fs.existsSync(seedPath)) {
+    console.log(`❌ Seed file not found: ${seedPath}`);
+    console.log('📁 Looking for seed.sql in:', path.join(__dirname, '../database/'));
+    await client.end();
+    return;
+  }
+
+  const sql = fs.readFileSync(seedPath, 'utf8');
   await client.query(sql);
   console.log('🌱 Seed data inserted.');
   await client.end();

@@ -4,9 +4,14 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
+// ✅ Correct path: from scripts/ up to root, then database/migrations
 const MIGRATIONS_DIR = path.join(__dirname, '../database/migrations');
 
-const config = {
+// ✅ Use DATABASE_URL if available, otherwise fallback to individual variables
+const config = process.env.DATABASE_URL ? {
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+} : {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT) || 5432,
   database: process.env.DB_NAME || 'universal_api_hub',
@@ -20,14 +25,33 @@ async function migrate() {
   await client.connect();
   console.log('✅ Connected to PostgreSQL');
 
+  // Create migrations table if it doesn't exist
   await client.query(`CREATE TABLE IF NOT EXISTS _migrations (
     id SERIAL PRIMARY KEY,
     filename VARCHAR(255) UNIQUE NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
-  const applied = (await client.query('SELECT filename FROM _migrations')).rows.map(r => r.filename);
+  // ✅ Check if migrations directory exists
+  if (!fs.existsSync(MIGRATIONS_DIR)) {
+    console.log(`❌ Migrations directory not found: ${MIGRATIONS_DIR}`);
+    console.log('📁 Creating migrations directory...');
+    fs.mkdirSync(MIGRATIONS_DIR, { recursive: true });
+    console.log('✅ Created migrations directory');
+    console.log('⚠️ No migration files found. Please add SQL files to database/migrations/');
+    await client.end();
+    return;
+  }
+
   const files = fs.readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort();
+  
+  if (files.length === 0) {
+    console.log('⚠️ No migration files found in:', MIGRATIONS_DIR);
+    await client.end();
+    return;
+  }
+
+  const applied = (await client.query('SELECT filename FROM _migrations')).rows.map(r => r.filename);
 
   for (const file of files) {
     if (applied.includes(file)) {
