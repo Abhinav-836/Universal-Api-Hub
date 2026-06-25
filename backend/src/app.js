@@ -3,9 +3,9 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const authRoutes = require('./routes/auth');
-const apiRoutes = require('./routes/api');
-const userRoutes = require('./routes/user');
+const authRoutes = require('./routes/auth.routes');
+const apiRoutes = require('./routes/api.routes');
+const userRoutes = require('./routes/user.routes');
 const { errorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/logger');
 
