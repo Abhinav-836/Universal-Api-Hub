@@ -2,7 +2,7 @@ const { API_COST_WEIGHTS } = require('../utils/constants');
 
 const attachApiContext = (slug) => (req, _res, next) => {
   req.apiSlug = slug;
-  req.apiCost = API_WEIGHTS[slug] ?? 1;
+  req.apiCost = API_COST_WEIGHTS[slug] ?? 1;
   next();
 };
 
