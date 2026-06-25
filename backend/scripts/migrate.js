@@ -4,10 +4,12 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
-// ✅ Correct path: from scripts/ up to root, then database/migrations
-const MIGRATIONS_DIR = path.join(__dirname, '../database/migrations');
+// ✅ CORRECT PATH - Go up two levels to root, then database/migrations
+// From: backend/scripts/migrate.js
+// To:   database/migrations/
+const MIGRATIONS_DIR = path.join(__dirname, '../../database/migrations');
 
-// ✅ Use DATABASE_URL if available, otherwise fallback to individual variables
+// ✅ Use DATABASE_URL if available
 const config = process.env.DATABASE_URL ? {
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
@@ -25,7 +27,6 @@ async function migrate() {
   await client.connect();
   console.log('✅ Connected to PostgreSQL');
 
-  // Create migrations table if it doesn't exist
   await client.query(`CREATE TABLE IF NOT EXISTS _migrations (
     id SERIAL PRIMARY KEY,
     filename VARCHAR(255) UNIQUE NOT NULL,
@@ -44,7 +45,7 @@ async function migrate() {
   }
 
   const files = fs.readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort();
-  
+
   if (files.length === 0) {
     console.log('⚠️ No migration files found in:', MIGRATIONS_DIR);
     await client.end();
