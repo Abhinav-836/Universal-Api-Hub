@@ -49,7 +49,7 @@ export default function Footer() {
         </div>
 
         <div className="border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-slate-600">© {new Date().getFullYear()} Universal API Hub. All rights reserved.</p>
+          <p className="text-xs text-slate-600">© {new Date().getFullYear()} Universal API Hub a product from StrattonTrade. All rights reserved.</p>
           <div className="flex items-center gap-4">
             <Link to="/login"  className="text-xs text-slate-500 hover:text-white transition-colors">Sign in</Link>
             <Link to="/signup" className="text-xs text-brand-400 hover:text-brand-300 transition-colors">Get started →</Link>
