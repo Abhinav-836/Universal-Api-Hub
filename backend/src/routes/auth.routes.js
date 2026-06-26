@@ -7,25 +7,26 @@ const { jwtAuth } = require('../middleware/auth.middleware');
 
 const router = express.Router();
 
-// Less strict limiter for production - 20 attempts per 15 min
+// ✅ FIX: Configure rate limit for proxy
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // Increased from 10 to 20
+  windowMs: 15 * 60 * 1000,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  keyGenerator: (req) => req.ip, // Use IP directly
   message: { 
     success: false, 
     error: 'Too many authentication attempts. Please wait 15 minutes.' 
   },
 });
 
-// Even less strict for /me endpoint
 const meLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 30, // 30 requests per minute
+  windowMs: 60 * 1000,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => req.ip,
   message: { 
     success: false, 
     error: 'Too many requests. Please wait a moment.' 
@@ -52,7 +53,6 @@ router.post('/login',
   AuthController.login
 );
 
-// /me endpoint - less restrictive rate limit
 router.get('/me', meLimiter, jwtAuth, AuthController.me);
 
 router.post('/logout', AuthController.logout);
