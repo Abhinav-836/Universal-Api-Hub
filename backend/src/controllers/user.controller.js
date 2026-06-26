@@ -95,6 +95,13 @@ const UserController = {
         });
       }
 
+      // ✅ Check if user is downgrading from premium
+      const currentUser = await UserModel.findById(userId);
+      if (currentUser.plan === 'premium' && plan === 'free') {
+        const allApis = await ApiModel.findAll();
+        await Promise.all(allApis.map(api => ApiModel.revokeAccess(userId, api.id)));
+      }
+
       const updatedUser = await UserModel.updatePlan(userId, plan);
 
       if (plan === 'premium') {
@@ -110,12 +117,27 @@ const UserController = {
 
       logger.info(`User ${userId} selected plan: ${plan}`);
 
+      // ✅ GENERATE NEW JWT TOKEN WITH UPDATED PLAN
+      const AuthService = require('./auth.service');
+      const tokenResult = await AuthService.refreshToken(userId);
+
+      logger.info(`New token generated for user ${userId} with plan ${plan}`);
+
+      // ✅ RETURN TOKEN IN RESPONSE
       res.json({
         success: true,
         message: `Plan updated to ${plan} successfully!`,
         plan: plan,
-        user: updatedUser,
+        user: {
+          id: updatedUser.id,
+          email: updatedUser.email,
+          username: updatedUser.username,
+          plan: updatedUser.plan,
+          created_at: updatedUser.created_at || updatedUser.createdAt
+        },
+        token: tokenResult.token,  // ← CRITICAL: This was missing!
         planFeatures: PLANS[plan],
+        isStripe: false,
       });
 
     } catch (err) {
