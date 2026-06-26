@@ -5,7 +5,7 @@ const ApiModel     = require('../models/api.model');
 const ApiKeyService = require('../services/apiKey.service');
 const UsageService = require('../services/usage.service');
 const RateLimitService = require('../services/rateLimit.service');
-const AuthService = require('../services/auth.service');
+const AuthService = require('../services/auth.service'); 
 const { getRedis, KEYS, TTL } = require('../config/redis');
 const { PLANS } = require('../utils/constants');
 const logger = require('../utils/logger');
@@ -96,7 +96,6 @@ const UserController = {
         });
       }
 
-      // ✅ Check if user is downgrading from premium
       const currentUser = await UserModel.findById(userId);
       if (currentUser.plan === 'premium' && plan === 'free') {
         const allApis = await ApiModel.findAll();
@@ -118,13 +117,12 @@ const UserController = {
 
       logger.info(`User ${userId} selected plan: ${plan}`);
 
-      // ✅ GENERATE NEW JWT TOKEN WITH UPDATED PLAN
-      const AuthService = require('./auth.service');
+      // ✅ Generate new JWT token with updated plan
       const tokenResult = await AuthService.refreshToken(userId);
 
       logger.info(`New token generated for user ${userId} with plan ${plan}`);
 
-      // ✅ RETURN TOKEN IN RESPONSE
+      // ✅ Return token in response
       res.json({
         success: true,
         message: `Plan updated to ${plan} successfully!`,
@@ -136,13 +134,13 @@ const UserController = {
           plan: updatedUser.plan,
           created_at: updatedUser.created_at || updatedUser.createdAt
         },
-        token: tokenResult.token,  // ← CRITICAL: This was missing!
+        token: tokenResult.token,
         planFeatures: PLANS[plan],
         isStripe: false,
       });
 
     } catch (err) {
-      logger.error('Select plan error', { error: err.message });
+      logger.error('Select plan error', { error: err.message, stack: err.stack });
       res.status(500).json({ success: false, error: err.message });
     }
   },
