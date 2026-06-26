@@ -5,6 +5,7 @@ const ApiModel     = require('../models/api.model');
 const ApiKeyService = require('../services/apiKey.service');
 const UsageService = require('../services/usage.service');
 const RateLimitService = require('../services/rateLimit.service');
+const AuthService = require('../services/auth.service');
 const { getRedis, KEYS, TTL } = require('../config/redis');
 const { PLANS } = require('../utils/constants');
 const logger = require('../utils/logger');
