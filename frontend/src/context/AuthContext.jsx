@@ -13,12 +13,10 @@ export const AuthProvider = ({ children }) => {
   const initTimeout = useRef(null);
   const isMounted = useRef(true);
 
-  // ✅ Check authentication on mount
   useEffect(() => {
     isMounted.current = true;
     
     const init = async () => {
-      // Prevent multiple simultaneous initialization attempts
       if (initCalled.current) {
         console.log('⏭️ Auth init already in progress, skipping...');
         return;
@@ -30,7 +28,6 @@ export const AuthProvider = ({ children }) => {
       try {
         const token = localStorage.getItem('auth_token');
         
-        // If no token exists, skip the API call
         if (!token) {
           console.log('ℹ️ No token found, user is not authenticated');
           if (isMounted.current) {
@@ -42,7 +39,6 @@ export const AuthProvider = ({ children }) => {
           return;
         }
 
-        // ✅ Token exists, try to get user data
         const data = await authService.me();
         
         if (isMounted.current && data?.success && data?.user) {
@@ -51,7 +47,6 @@ export const AuthProvider = ({ children }) => {
           setAuthAttempts(0);
           setAuthError(null);
         } else if (isMounted.current) {
-          // Token exists but is invalid
           console.warn('⚠️ Token invalid, clearing...');
           localStorage.removeItem('auth_token');
           setUser(null);
@@ -60,26 +55,18 @@ export const AuthProvider = ({ children }) => {
       } catch (err) {
         console.error('❌ Auth check failed:', err.message);
         
-        // ✅ Handle rate limiting (429) with retry
         if (err.response?.status === 429) {
           console.log('⏳ Rate limited, will retry...');
-          // Retry logic is handled in the service layer
           setAuthError('Too many requests. Please try again later.');
-        } 
-        // ✅ Handle 401 Unauthorized - token expired/invalid
-        else if (err.response?.status === 401) {
+        } else if (err.response?.status === 401) {
           console.log('🔑 Token expired or invalid');
           localStorage.removeItem('auth_token');
           setUser(null);
-          setAuthError(null); // Don't show error for expected 401
-        } 
-        // ✅ Handle network errors
-        else if (err.code === 'ERR_NETWORK') {
+          setAuthError(null);
+        } else if (err.code === 'ERR_NETWORK') {
           console.warn('🌐 Network error - backend may be down');
           setAuthError('Network error. Please check your connection.');
-        }
-        // ✅ Handle other errors
-        else {
+        } else {
           setAuthError(err.message || 'Authentication error');
         }
         
@@ -95,7 +82,6 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    // ✅ Small delay to avoid race conditions with other components
     const timeoutId = setTimeout(init, 300);
     
     return () => {
@@ -104,7 +90,39 @@ export const AuthProvider = ({ children }) => {
       clearTimeout(initTimeout.current);
       initCalled.current = false;
     };
-  }, []); // Empty dependency array ensures this runs once on mount
+  }, []);
+
+  // ✅ IMPROVED: forceRefresh with token check
+  const forceRefresh = useCallback(async () => {
+    console.log('🔄 Force refreshing user data...');
+    
+    // ✅ Check if token exists first
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      console.log('ℹ️ No token found, cannot refresh');
+      return null;
+    }
+    
+    try {
+      const data = await authService.me();
+      if (isMounted.current && data?.success && data?.user) {
+        setUser(data.user);
+        console.log('✅ User data refreshed:', data.user);
+        return data.user;
+      }
+      return null;
+    } catch (err) {
+      console.error('❌ Force refresh failed:', err);
+      // ✅ Clear token on 401
+      if (err.response?.status === 401) {
+        localStorage.removeItem('auth_token');
+        if (isMounted.current) {
+          setUser(null);
+        }
+      }
+      return null;
+    }
+  }, []);
 
   const login = useCallback(async (credentials) => {
     setLoading(true);
@@ -126,20 +144,17 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       console.error('❌ Login error:', err.message);
       
-      // ✅ Handle rate limiting
       if (err.response?.status === 429) {
         setAuthAttempts(prev => prev + 1);
         setAuthError('Too many login attempts. Please wait a moment.');
         throw new Error('Too many login attempts. Please wait a moment.');
       }
       
-      // ✅ Handle invalid credentials
       if (err.response?.status === 401) {
         setAuthError('Invalid email or password');
         throw new Error('Invalid email or password');
       }
       
-      // ✅ Handle network errors
       if (err.code === 'ERR_NETWORK') {
         setAuthError('Network error. Please check your connection.');
         throw new Error('Network error. Please check your connection.');
@@ -189,7 +204,6 @@ export const AuthProvider = ({ children }) => {
       console.log('✅ Logout successful');
     } catch (err) {
       console.warn('⚠️ Logout error:', err.message);
-      // Still clear local state even if server logout fails
       setUser(null);
       setAuthAttempts(0);
       localStorage.removeItem('auth_token');
@@ -207,7 +221,6 @@ export const AuthProvider = ({ children }) => {
     });
   }, []);
 
-  // ✅ Clear auth errors after 5 seconds (optional)
   useEffect(() => {
     if (authError) {
       const timer = setTimeout(() => {
@@ -226,6 +239,7 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     updateUser,
+    forceRefresh,
     authAttempts,
     authError,
     isAuthenticated: !!user && !!localStorage.getItem('auth_token'),

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { dashboardService } from '../services/auth';
+import { dashboardService, planService } from '../services/auth';
 import StatsCards from '../components/dashboard/StatsCards';
 import { DailyUsageChart, ApiBreakdownChart, UsageRing } from '../components/dashboard/UsageChart';
 import ApiKeyManager from '../components/dashboard/ApiKeyManager';
@@ -145,7 +145,7 @@ function UpgradeModal({ plan, onClose, onUpgrade }) {
 }
 
 export default function Dashboard() {
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, forceRefresh } = useAuth(); // ✅ Added forceRefresh
   const { toasts, show: showToast, remove } = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -156,9 +156,7 @@ export default function Dashboard() {
   const planCfg = PLANS[plan] || PLANS.free;
   const userApiKey = data?.apiKeys?.[0]?.key_prefix ? data.apiKeys[0].key_prefix + '...' : '';
 
-  // Fixed load function - uses ref to prevent multiple calls
   const load = useCallback(async () => {
-    // Prevent multiple simultaneous loads
     if (loadCalled.current) return;
     loadCalled.current = true;
 
@@ -170,7 +168,6 @@ export default function Dashboard() {
       ]);
       setData({ ...dash, usage });
     } catch (err) {
-      // Only show error if not 401 (unauthorized)
       if (err.response?.status !== 401) {
         showToast('Failed to load dashboard data', 'error');
       }
@@ -180,36 +177,31 @@ export default function Dashboard() {
     }
   }, [showToast]);
 
-  // Load once on mount
   useEffect(() => {
     load();
-    // Cleanup to prevent memory leaks
     return () => {
       loadCalled.current = false;
     };
-  }, []); // Empty dependency array = run once
+  }, []);
 
-  // Handle upgrade
+  // ✅ Updated handleUpgrade - uses planService
   const handleUpgrade = async (targetPlan) => {
     try {
-      const result = await dashboardService.selectPlan(targetPlan);
+      const result = await planService.selectPlan(targetPlan);
+      
       showToast(`🎉 Upgraded to ${targetPlan} plan successfully!`);
-      if (result.user) {
-        updateUser({ plan: targetPlan });
+      
+      // ✅ Force refresh user data
+      if (forceRefresh) {
+        await forceRefresh();
       }
+      
+      // ✅ Reload dashboard data
       await load();
       setUpgradeModal(false);
     } catch (err) {
-      try {
-        const { url } = await dashboardService.createCheckoutSession(targetPlan);
-        if (url) {
-          window.location.href = url;
-        } else {
-          showToast('Please contact support for upgrade', 'warning');
-        }
-      } catch {
-        showToast('Upgrade failed. Please try again.', 'error');
-      }
+      console.error('Upgrade failed:', err);
+      showToast('Upgrade failed. Please try again.', 'error');
     }
   };
 
@@ -223,7 +215,6 @@ export default function Dashboard() {
     }
   };
 
-  // Build stats
   const stats = {
     dailyUsed: data?.todayUsage?.total_requests || 0,
     dailyLimit: data?.dailyLimit || planCfg.dailyLimit,
@@ -242,7 +233,6 @@ export default function Dashboard() {
       <ToastContainer toasts={toasts} remove={remove} />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="font-display text-2xl font-extrabold text-white mb-1">Dashboard</h1>
@@ -281,10 +271,8 @@ export default function Dashboard() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Stats row */}
             <StatsCards stats={stats} />
 
-            {/* Charts row */}
             <div className="grid lg:grid-cols-3 gap-6">
               <div className="card-glass rounded-2xl p-5 flex flex-col items-center justify-center">
                 <h2 className="font-display font-semibold text-white text-sm mb-4 self-start">Today's Usage</h2>
@@ -300,7 +288,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* API breakdown + playground */}
             <div className="grid lg:grid-cols-2 gap-6">
               <div className="card-glass rounded-2xl p-5">
                 <h2 className="font-display font-semibold text-white text-sm mb-4">API Breakdown</h2>
@@ -313,7 +300,6 @@ export default function Dashboard() {
               <MiniPlayground userApiKey={userApiKey} />
             </div>
 
-            {/* Selected APIs */}
             {selectedApis.length > 0 && (
               <div className="card-glass rounded-2xl p-5">
                 <div className="flex items-center gap-2 mb-4">
@@ -337,10 +323,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Key manager */}
             <ApiKeyManager apis={allApis} onToast={showToast} />
-
-            {/* Recent requests */}
             <RecentRequests requests={recentReqs} />
           </div>
         )}
