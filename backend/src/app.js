@@ -11,6 +11,8 @@ const { requestLogger } = require('./middleware/logger');
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 // ==================== CORS CONFIGURATION ====================
 const allowedOrigins = [
   'https://universal-api-hub.vercel.app',
