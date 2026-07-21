@@ -4,37 +4,49 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
-// ✅ CORRECT PATH - From backend/scripts/ to root/database/seed.sql
+// Supabase connection configuration
 const config = process.env.DATABASE_URL ? {
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  ssl: { rejectUnauthorized: false },
 } : {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME || 'universal_api_hub',
+  database: process.env.DB_NAME || 'postgres',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || '',
-  ssl: false,
+  ssl: { rejectUnauthorized: false },
 };
 
 async function seed() {
+  console.log('🔍 Connecting to Supabase...');
   const client = new Client(config);
-  await client.connect();
-  console.log('✅ Connected to PostgreSQL');
+  
+  try {
+    await client.connect();
+    console.log('✅ Connected to Supabase');
+  } catch (err) {
+    console.error('❌ Connection failed:', err.message);
+    process.exit(1);
+  }
 
-  // ✅ Correct path: from scripts/ up to root, then database/seed.sql
   const seedPath = path.join(__dirname, '../../database/seed.sql');
 
   if (!fs.existsSync(seedPath)) {
     console.log(`❌ Seed file not found: ${seedPath}`);
-    console.log('📁 Looking for seed.sql in:', path.join(__dirname, '../../database/'));
     await client.end();
     return;
   }
 
+  console.log('📝 Seeding data...');
   const sql = fs.readFileSync(seedPath, 'utf8');
-  await client.query(sql);
-  console.log('🌱 Seed data inserted.');
+  
+  try {
+    await client.query(sql);
+    console.log('🌱 Seed data inserted successfully!');
+  } catch (err) {
+    console.error('❌ Seed error:', err.message);
+  }
+
   await client.end();
 }
 
