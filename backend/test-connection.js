@@ -1,28 +1,35 @@
-require('dotenv').config();
+// backend/test-connection.js
 const { Client } = require('pg');
 
-console.log('Testing with:');
-console.log('Host:', process.env.DB_HOST);
-console.log('Port:', process.env.DB_PORT);
-console.log('Database:', process.env.DB_NAME);
-console.log('User:', process.env.DB_USER);
-console.log('Password:', process.env.DB_PASSWORD ? '(set)' : 'missing');
+// Override the type parsing to preserve username
+const types = require('pg').types;
 
 const config = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME || 'universal_api_hub',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'Harsh@123',
-  ssl: false,
+  host: 'aws-1-us-west-2.pooler.supabase.com',
+  port: 6543,
+  database: 'postgres',
+  user: 'postgres.lpvxlwcvxnkbrkqetovu',
+  password: 'universal-api-db',
+  ssl: { rejectUnauthorized: false },
+  // Keep the connection alive
+  keepAlive: true,
 };
 
+console.log('🔍 Testing with keepAlive...');
+
 const client = new Client(config);
-client.connect()
-  .then(() => {
-    console.log('✅ Connection successful!');
-    client.end();
-  })
-  .catch(err => {
-    console.error('❌ Connection failed:', err.message);
-  });
+
+async function test() {
+  try {
+    await client.connect();
+    console.log('✅ Connected!');
+    const result = await client.query('SELECT NOW() as time');
+    console.log('🕐 Time:', result.rows[0].time);
+    await client.end();
+    console.log('🎉 Success!');
+  } catch (err) {
+    console.error('❌ Error:', err.message);
+  }
+}
+
+test();

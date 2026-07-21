@@ -1,16 +1,21 @@
+// backend/src/config/db.js
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
 
+// Use the working configuration from your test
 const poolConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME || 'universal_api_hub',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD, // ← REMOVED hardcoded fallback
+  host: 'aws-1-us-west-2.pooler.supabase.com',
+  port: 6543,  // Transaction pooler port
+  database: 'postgres',
+  user: 'postgres.lpvxlwcvxnkbrkqetovu',
+  password: process.env.DB_PASSWORD,
+  ssl: {
+    rejectUnauthorized: false,
+  },
   max: parseInt(process.env.DB_POOL_MAX) || 10,
   idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT) || 30000,
-  connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECT_TIMEOUT) || 2000,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECT_TIMEOUT) || 10000,
+  keepAlive: true,  // Important: This helped the connection work
 };
 
 // Validate password is set
