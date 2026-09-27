@@ -45,18 +45,56 @@ const UserController = {
 
       const planConfig = PLANS[plan];
 
+      // BUG FIX: `allApis` here came straight from ApiModel.findAll(), with
+      // no `selected` flag — but ApiKeyManager (on the dashboard page)
+      // filters `apis.filter(a => a.selected)` to build its "scope this key"
+      // list, so that list was always empty. Add the same
+      // selected/accessible/locked flags that UserController.getApis()
+      // already computes for the /api/user/apis endpoint.
+      const userApiIds = new Set(userApis.map((a) => a.id));
+      const planOrder = { free: 0, pro: 1, premium: 2 };
+      const userPlanLevel = planOrder[plan] ?? 0;
+      const allApisWithFlags = allApis.map((api) => ({
+        ...api,
+        selected: userApiIds.has(api.id),
+        accessible: planOrder[api.min_plan] <= userPlanLevel,
+        locked: planOrder[api.min_plan] > userPlanLevel,
+      }));
+
+      const dashboard = {
+        user:      { ...req.user, planConfig },
+        usage,
+        stats,
+        apiBreakdown,
+        userApis,
+        allApis: allApisWithFlags,
+        apiKeys,
+        recentRequests: recent,
+      };
+
+      // BUG FIX: the frontend Dashboard page (Dashboard.jsx) reads its data
+      // from flat top-level fields — `data.todayUsage`, `data.dailyLimit`,
+      // `data.selectedApis`, `data.apis`, `data.apiKeys`, `data.recentRequests`,
+      // `data.apiBreakdown`, `data.usageHistory` — but this endpoint only ever
+      // nested everything under `dashboard: {...}`. Since
+      // dashboardService.getDashboard() returns the raw response body, every
+      // one of those lookups was undefined and the dashboard silently
+      // rendered as empty (0 requests, no charts, no active APIs, no keys)
+      // regardless of actual usage. Emitting the same data at the top level
+      // (in addition to the nested `dashboard` object, kept for backwards
+      // compatibility with anything else reading it) fixes this without
+      // requiring a frontend contract change.
       res.json({
         success: true,
-        dashboard: {
-          user:      { ...req.user, planConfig },
-          usage,
-          stats,
-          apiBreakdown,
-          userApis,
-          allApis,
-          apiKeys,
-          recentRequests: recent,
-        },
+        dashboard,
+        todayUsage: { total_requests: usage.used },
+        dailyLimit: usage.limit,
+        selectedApis: userApis,
+        apis: allApisWithFlags,
+        apiKeys,
+        recentRequests: recent,
+        apiBreakdown,
+        usageHistory: stats,
       });
     } catch (err) {
       logger.error('Dashboard error', { error: err.message });

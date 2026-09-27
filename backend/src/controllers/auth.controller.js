@@ -98,12 +98,19 @@ const AuthController = {
       }
       
       // ✅ Return user data without sensitive fields
+      // BUG FIX: this previously omitted `plan` entirely and read
+      // `user.createdAt` / `user.updatedAt` (camelCase), but UserModel.findById
+      // returns Postgres column names (`created_at`), and doesn't even select
+      // `updated_at`. Both fields were always undefined, and since the
+      // frontend (Navbar, Dashboard) reads `user.plan` to show the current
+      // plan badge, every page refresh made a Pro/Premium user look like
+      // they were back on the Free plan.
       const userData = {
         id: user.id,
         email: user.email,
         username: user.username,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
+        plan: user.plan,
+        createdAt: user.created_at,
         // Don't return password, resetToken, etc.
       };
       
@@ -156,6 +163,10 @@ const AuthController = {
 
   // ✅ Optional: Add password change endpoint
   changePassword: async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
     try {
       const { currentPassword, newPassword } = req.body;
       

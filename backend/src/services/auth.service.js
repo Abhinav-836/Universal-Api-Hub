@@ -107,6 +107,34 @@ const AuthService = {
 
     return { token };
   },
+
+  /**
+   * Change a user's password.
+   * BUG FIX: AuthController.changePassword called this method but it never
+   * existed on AuthService, so hitting that endpoint would throw
+   * "AuthService.changePassword is not a function" instead of doing
+   * anything useful.
+   */
+  changePassword: async ({ userId, currentPassword, newPassword }) => {
+    const user = await UserModel.findByIdWithPassword(userId);
+    if (!user) {
+      const error = new Error('User not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const valid = await verifyPassword(user.password_hash, currentPassword);
+    if (!valid) {
+      const error = new Error('Current password is incorrect');
+      error.statusCode = 401;
+      throw error;
+    }
+
+    const newHash = await hashPassword(newPassword);
+    await UserModel.updatePassword(userId, newHash);
+
+    logger.info('Password changed', { userId });
+  },
 };
 
 module.exports = AuthService;

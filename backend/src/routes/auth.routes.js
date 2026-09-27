@@ -58,4 +58,19 @@ router.get('/me', meLimiter, jwtAuth, AuthController.me);
 router.post('/logout', AuthController.logout);
 router.post('/refresh', jwtAuth, AuthController.refresh);
 
+// BUG FIX: AuthController.changePassword existed but was never routed,
+// so the endpoint the frontend/comments implied ("Optional: Add password
+// change endpoint") was unreachable. Wired up here now that
+// AuthService.changePassword actually exists.
+router.post('/change-password',
+  [
+    authLimiter,
+    jwtAuth,
+    body('currentPassword').notEmpty().withMessage('Current password is required'),
+    body('newPassword').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+      .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/).withMessage('Password must contain uppercase, lowercase, and number'),
+  ],
+  AuthController.changePassword
+);
+
 module.exports = router;

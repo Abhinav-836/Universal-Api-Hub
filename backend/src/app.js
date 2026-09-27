@@ -91,12 +91,31 @@ app.use(cookieParser());
 app.use(requestLogger);
 
 // ==================== RATE LIMITING ====================
+// BUG FIX: this limiter is mounted globally, before any auth middleware runs
+// (jwtAuth / apiKeyAuth live inside the route files, mounted further down).
+// That meant `req.user` was ALWAYS undefined here, so the "500 for
+// authenticated users" branch was dead code — every request in production
+// silently got the 200/min anonymous limit. Since we can't cheaply verify a
+// credential this early without duplicating auth logic, we instead detect
+// the mere *presence* of a credential (JWT cookie/Authorization header, or
+// an X-API-Key header) as a signal to grant the higher ceiling. This is a
+// coarse allowance (not a security check — the real per-user quota is
+// enforced later by userRateLimit/RateLimitService), just meant to stop
+// legitimate logged-in traffic from being throttled at the same rate as
+// anonymous traffic.
+const hasAuthCredential = (req) => {
+  if (req.headers['x-api-key']) return true;
+  if (req.headers.authorization?.startsWith('Bearer ')) return true;
+  const cookieHeader = req.headers.cookie || '';
+  return /(?:^|;\s*)(jwt|token)=/.test(cookieHeader);
+};
+
 const limiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: (req) => {
-    // Higher limit for authenticated users in production
+    // Higher limit for requests carrying a credential in production
     if (process.env.NODE_ENV === 'production') {
-      return req.user ? 500 : 200;
+      return hasAuthCredential(req) ? 500 : 200;
     }
     return 1000; // Development
   },

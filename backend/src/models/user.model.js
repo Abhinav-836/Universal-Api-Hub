@@ -30,6 +30,19 @@ const UserModel = {
   },
 
   /**
+   * Find user by ID including password_hash (for password-change flows).
+   * Kept separate from findById so the normal cached user lookup never
+   * accidentally carries the hash into a response or the Redis cache.
+   */
+  findByIdWithPassword: async (id) => {
+    const result = await db.query(
+      'SELECT id, email, username, plan, password_hash, is_active FROM users WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
    * Find user by username
    */
   findByUsername: async (username) => {
@@ -95,6 +108,16 @@ const UserModel = {
       [email.toLowerCase(), username.toLowerCase()]
     );
     return result.rows.length > 0;
+  },
+
+  /**
+   * Update a user's password hash
+   */
+  updatePassword: async (userId, passwordHash) => {
+    await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+      [passwordHash, userId]
+    );
   },
 
   /**

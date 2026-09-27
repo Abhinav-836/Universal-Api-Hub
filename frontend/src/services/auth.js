@@ -106,8 +106,12 @@ export const planService = {
   },
 
   // Get current user's plan
+  // BUG FIX: this hit `/api/user/current-plan`, which doesn't exist on the
+  // backend (only /plans and /plan-features are routed) — every call
+  // 404'd. `/api/user/plans` already returns a `currentPlan` field plus the
+  // full plan list, so reuse it.
   getCurrentPlan: async () => {
-    const response = await api.get('/api/user/current-plan');
+    const response = await api.get('/api/user/plans');
     return response.data;
   },
 

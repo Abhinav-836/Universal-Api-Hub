@@ -82,8 +82,11 @@ export default function ApiKeyManager({ apis = [], onToast }) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-xs font-medium text-white truncate">{k.label}</span>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${KEY_TYPE_COLORS[k.type] || KEY_TYPE_COLORS.dev}`}>
-                    {k.type}
+                  {/* BUG FIX: the backend returns `key_type` (matching the DB column),
+                      not `type` — this badge and its color lookup were always falling
+                      back to the default (undefined -> blank badge, dev color). */}
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${KEY_TYPE_COLORS[k.key_type] || KEY_TYPE_COLORS.dev}`}>
+                    {k.key_type}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-slate-600 font-mono">
@@ -131,7 +134,11 @@ function CreateKeyModal({ apis, onClose, onCreated, onToast }) {
     if (!form.label.trim()) { onToast?.('Label required', 'warning'); return; }
     setLoading(true);
     try {
-      const payload = { label: form.label, type: form.type };
+      // BUG FIX: the backend route validates/reads `keyType` (see
+      // user.routes.js / ApiKeyController.create), not `type`. Sending
+      // `type` meant the selected key type (dev/prod/test) was silently
+      // dropped and every created key defaulted to 'dev'.
+      const payload = { label: form.label, keyType: form.type };
       if (form.expiresAt) payload.expiresAt = form.expiresAt;
       if (form.scopedApis.length) payload.scopedApis = form.scopedApis;
       const data = await apiKeyService.create(payload);
