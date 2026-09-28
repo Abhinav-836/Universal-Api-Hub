@@ -24,7 +24,7 @@ describe('Universal API Hub - Integration Tests', () => {
     it('should return ok for /health', async () => {
       const res = await request(app).get('/health');
       expect(res.statusCode).toBe(200);
-      expect(res.body.status).toBe('ok');
+      expect(res.body.status).toBe('healthy');
     });
   });
 

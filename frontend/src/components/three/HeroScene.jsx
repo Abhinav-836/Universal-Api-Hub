@@ -62,8 +62,15 @@ const HeroScene = () => {
     scene.add(light2);
 
     let time = 0;
+    // BUG FIX: `frame` was never captured, so on unmount there was nothing
+    // to pass to cancelAnimationFrame — the RAF loop kept running forever,
+    // calling renderer.render() on a renderer/DOM node that had already been
+    // disposed and removed. That throws repeatedly in the console and leaks
+    // GPU memory for as long as the tab stays open. (This component isn't
+    // currently imported anywhere, but fixing it so it's safe if/when it is.)
+    let frame;
     const animate = () => {
-      requestAnimationFrame(animate);
+      frame = requestAnimationFrame(animate);
       time += 0.005;
       particles.rotation.y = time * 0.05;
       particles.rotation.x = Math.sin(time * 0.2) * 0.1;
@@ -81,8 +88,15 @@ const HeroScene = () => {
     };
     window.addEventListener('resize', handleResize);
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener('resize', handleResize);
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
+      // BUG FIX: geometries/materials were never disposed (only the renderer
+      // was), leaking GPU-side buffers on every mount/unmount cycle.
+      particlesGeometry.dispose();
+      particlesMaterial.dispose();
+      knotGeo.dispose();
+      knotMat.dispose();
       renderer.dispose();
     };
   }, []);

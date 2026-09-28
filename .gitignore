@@ -8,7 +8,14 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-package-lock.json
+# BUG FIX: package-lock.json was previously ignored here (and again below
+# for backend/frontend specifically), which meant it was never committed to
+# git. `npm ci` — used both by CI's "Install Dependencies" step and by most
+# hosting platforms' default install command — REQUIRES a committed
+# package-lock.json that's in sync with package.json; without one it fails
+# outright ("The `npm ci` command can only install with an existing
+# package-lock.json"). Lockfiles should be committed for applications (as
+# opposed to publishable libraries), so this line is intentionally removed.
 yarn.lock
 pnpm-lock.yaml
 
@@ -72,13 +79,11 @@ dump.rdb
 backend/logs/
 backend/.env
 backend/node_modules/
-backend/package-lock.json
 
 # ── Frontend specific ────────────────────────────────────────
 frontend/dist/
 frontend/.env.local
 frontend/node_modules/
-frontend/package-lock.json
 
 # ── Misc ─────────────────────────────────────────────────────
 *.pem

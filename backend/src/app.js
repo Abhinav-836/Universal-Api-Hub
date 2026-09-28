@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth.routes');
 const apiRoutes = require('./routes/api.routes');
 const userRoutes = require('./routes/user.routes');
+const UserController = require('./controllers/user.controller');
 const { errorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/logger');
 
@@ -84,9 +85,37 @@ app.use(helmet({
   }
 }));
 
+// ==================== STRIPE WEBHOOK ====================
+// BUG FIX: UserController.stripeWebhook existed but was never mounted
+// anywhere, so Stripe's subscription events never reached the app and paid
+// upgrades/cancellations never changed a user's plan (POST /webhook/stripe
+// just 404'd). It must be registered BEFORE the JSON body parser below:
+// stripe.webhooks.constructEvent() verifies the signature against the exact
+// raw request bytes, which express.json() would otherwise consume/alter.
+app.post('/webhook/stripe', express.raw({ type: 'application/json' }), UserController.stripeWebhook);
+
 // ==================== MIDDLEWARE ====================
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// BUG FIX: the backend's own test suite (tests/app.test.js) asserts a
+// "100kb payload size limit globally" and expects 413 for anything larger —
+// but this was set to a blanket 10mb for every route, so that test has been
+// failing (silently, unless someone actually runs `npm test`). A flat 100kb
+// cap everywhere would in turn break /api/v1/image/analyze, which
+// intentionally accepts base64-encoded images up to ~5MB
+// (see routes/api.routes.js: body('imageBase64')...isLength({ max: 5000000 })).
+// Fixed by keeping a strict small default (matches the test) and only
+// widening the limit for the one route that legitimately needs it.
+const STRICT_JSON_LIMIT = '100kb';
+const IMAGE_JSON_LIMIT = '7mb'; // headroom over the 5,000,000-char base64 cap
+const strictJsonParser = express.json({ limit: STRICT_JSON_LIMIT });
+const imageJsonParser = express.json({ limit: IMAGE_JSON_LIMIT });
+
+app.use((req, res, next) => {
+  if (req.path === '/api/v1/image/analyze') {
+    return imageJsonParser(req, res, next);
+  }
+  return strictJsonParser(req, res, next);
+});
+app.use(express.urlencoded({ extended: true, limit: STRICT_JSON_LIMIT }));
 app.use(cookieParser());
 app.use(requestLogger);
 
