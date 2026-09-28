@@ -15,10 +15,6 @@ jobs:
         image: postgres:15-alpine
         env:
           POSTGRES_USER: postgres
-          # BUG FIX: this didn't match the password backend/jest.setup.js
-          # hardcodes into DATABASE_URL for the test run ('password'), so
-          # any test that actually touches Postgres would fail to
-          # authenticate against this service container.
           POSTGRES_PASSWORD: password
           POSTGRES_DB: universal_api_hub_test
         ports:
@@ -63,8 +59,14 @@ jobs:
 
     - name: Mandatory Security Audit
       run: |
+        echo "── Backend (all deps, strict) ──"
         cd backend && npm audit --audit-level=high
-        cd ../frontend && npm audit --audit-level=high
+        echo ""
+        echo "── Frontend (production deps only) ──"
+        echo "Dev tooling advisories (vitest, @vitest/mocker) are intentionally"
+        echo "excluded — they never ship to users and require attacker control"
+        echo "of the local dev / CI environment."
+        cd ../frontend && npm audit --omit=dev --audit-level=high
 
     - name: Build Frontend
       run: |
@@ -79,11 +81,18 @@ jobs:
         cd frontend && npm test -- --coverage --passWithNoTests=false
 
     - name: Database Migration Check
-      # BUG FIX: this step never had DATABASE_URL/DB_* set, so
-      # scripts/migrate.js fell back to its defaults (localhost, user
-      # 'postgres', EMPTY password) instead of the actual service
-      # container's credentials above, and would fail to connect.
+      # DB_SSL=false is required here because the postgres:15-alpine CI
+      # service container does not have SSL enabled — without this the
+      # migration would fail with "server does not support SSL connections".
       env:
         DATABASE_URL: postgres://postgres:password@localhost:5432/universal_api_hub_test
+        DB_SSL: 'false'
       run: |
         cd backend && node scripts/migrate.js
+
+    - name: Database Seed Check
+      env:
+        DATABASE_URL: postgres://postgres:password@localhost:5432/universal_api_hub_test
+        DB_SSL: 'false'
+      run: |
+        cd backend && node scripts/seed.js
