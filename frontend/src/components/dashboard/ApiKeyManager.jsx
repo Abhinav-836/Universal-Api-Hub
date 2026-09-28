@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Key, Plus, Trash2, Copy, Check, ChevronDown, X, Eye, EyeOff } from 'lucide-react';
 import { apiKeyService } from '../../services/auth';
 import { KEY_TYPES, KEY_TYPE_COLORS } from '../../utils/constants';
@@ -147,9 +148,17 @@ function CreateKeyModal({ apis, onClose, onCreated, onToast }) {
     finally { setLoading(false); }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md card-glass rounded-2xl p-6 shadow-2xl animate-scale-in">
+  // BUG FIX: this modal was rendered inline inside the API Keys card, which
+  // uses `.card-glass` (backdrop-filter). A backdrop-filter makes that card
+  // the containing block for any `position: fixed` child, so `fixed inset-0`
+  // sized the overlay to the CARD instead of the viewport: the modal was
+  // clipped at the bottom (Create Key button unreachable) and stacked
+  // underneath the neighbouring Playground / Recent Requests cards.
+  // Rendering through a portal into <body> escapes that stacking context;
+  // the panel also scrolls on short screens so the button is always reachable.
+  return createPortal(
+    <div className="fixed inset-0 z-[9000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto card-glass rounded-2xl p-6 shadow-2xl animate-scale-in">
         <div className="flex items-center justify-between mb-5">
           <h3 className="font-display font-bold text-white">Create API Key</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X size={18} /></button>
@@ -205,6 +214,7 @@ function CreateKeyModal({ apis, onClose, onCreated, onToast }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
