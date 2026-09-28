@@ -9,10 +9,9 @@ const llmChatHandler = withUsageLog(async (req, res) => {
   }
 
   const { message, system, temperature, maxTokens, model } = req.body;
-  
-  // Get user's plan from request
+
   const plan = req.user?.plan || 'free';
-  
+
   try {
     const result = await LlmService.chat({
       message,
@@ -20,7 +19,7 @@ const llmChatHandler = withUsageLog(async (req, res) => {
       temperature,
       maxTokens,
       plan,
-      model, // Optional: user can specify a specific model
+      model,
     });
 
     res.json({

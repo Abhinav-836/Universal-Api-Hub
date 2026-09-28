@@ -1,6 +1,4 @@
 // backend/src/config/jwt.js — Single source of truth for JWT config
-const isDev = (process.env.NODE_ENV || 'development') !== 'production';
-
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 

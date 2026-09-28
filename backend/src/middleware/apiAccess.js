@@ -3,11 +3,6 @@ const ApiModel = require('../models/api.model');
 const { getRedis, KEYS, TTL } = require('../config/redis');
 const logger = require('../utils/logger');
 
-/**
- * Check if the user has selected access to the requested API.
- * Premium users bypass the check (auto-access to all APIs).
- * Attaches req.apiSlug, req.apiId, req.apiRecord to request.
- */
 const apiAccessCheck = (slug) => async (req, res, next) => {
   try {
     req.apiSlug = slug;
@@ -15,7 +10,6 @@ const apiAccessCheck = (slug) => async (req, res, next) => {
     const userId = req.user?.id;
     const plan   = req.user?.plan;
 
-    // Fetch the API record
     const api = await ApiModel.findBySlug(slug);
     if (!api) {
       return res.status(404).json({ success: false, error: 'API not found' });
@@ -23,9 +17,9 @@ const apiAccessCheck = (slug) => async (req, res, next) => {
 
     req.apiId     = api.id;
     req.apiRecord = api;
-    req.apiCost   = api.cost ?? api.cost_weight ?? req.apiCost ?? 1;
+    // FIX: prefer cost_weight column, fall back to 1
+    req.apiCost   = api.cost_weight ?? api.cost ?? 1;
 
-    // Check API key scope (if key has restricted scope)
     if (req.apiKey?.scoped_apis?.length) {
       if (!req.apiKey.scoped_apis.includes(slug)) {
         return res.status(403).json({
@@ -35,10 +29,8 @@ const apiAccessCheck = (slug) => async (req, res, next) => {
       }
     }
 
-    // Premium users get all APIs automatically
     if (plan === 'premium') return next();
 
-    // Check user has explicitly selected this API
     const redis   = getRedis();
     const cacheKey = KEYS.userApisCache(userId);
 

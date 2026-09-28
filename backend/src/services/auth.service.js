@@ -6,9 +6,6 @@ const logger = require('../utils/logger');
 const { JWT_SECRET, JWT_EXPIRES_IN } = require('../config/jwt');
 
 const AuthService = {
-  /**
-   * Register a new user
-   */
   register: async ({ email, username, password }) => {
     const exists = await UserModel.existsByEmailOrUsername(email, username);
     if (exists) {
@@ -24,9 +21,6 @@ const AuthService = {
     return user;
   },
 
-  /**
-   * Login a user
-   */
   login: async ({ email, password }) => {
     const user = await UserModel.findByEmail(email);
     if (!user) {
@@ -62,9 +56,6 @@ const AuthService = {
     };
   },
 
-  /**
-   * Verify a JWT token
-   */
   verifyToken: (token) => {
     try {
       return jwt.verify(token, JWT_SECRET);
@@ -75,9 +66,6 @@ const AuthService = {
     }
   },
 
-  /**
-   * Refresh token (issue a new one with updated user data)
-   */
   refreshToken: async (userId) => {
     const user = await UserModel.findById(userId);
     if (!user) {
@@ -92,12 +80,11 @@ const AuthService = {
       throw error;
     }
 
-    // ✅ Generate new token with updated plan
     const token = jwt.sign(
-      { 
-        userId: user.id, 
-        email: user.email, 
-        plan: user.plan 
+      {
+        userId: user.id,
+        email: user.email,
+        plan: user.plan
       },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
@@ -108,13 +95,6 @@ const AuthService = {
     return { token };
   },
 
-  /**
-   * Change a user's password.
-   * BUG FIX: AuthController.changePassword called this method but it never
-   * existed on AuthService, so hitting that endpoint would throw
-   * "AuthService.changePassword is not a function" instead of doing
-   * anything useful.
-   */
   changePassword: async ({ userId, currentPassword, newPassword }) => {
     const user = await UserModel.findByIdWithPassword(userId);
     if (!user) {

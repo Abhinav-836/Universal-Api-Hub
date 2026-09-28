@@ -7,7 +7,7 @@ const axios = require('axios');
 const { withUsageLog } = require('../utils/apiHandler');
 
 // ============================================================
-// API KEY MANAGEMENT CONTROLLER (unchanged)
+// API KEY MANAGEMENT CONTROLLER
 // ============================================================
 const ApiKeyController = {
   list: async (req, res) => {
@@ -68,21 +68,25 @@ const ApiKeyController = {
 };
 
 // ============================================================
-// Per‑minute helper for Weather (OpenWeatherMap free tier: 60/min)
+// Per-minute helper for Weather
 // ============================================================
 const WEATHER_USER_MINUTE_LIMIT = 30;
 
 async function checkWeatherMinuteLimit(userId) {
   if (!userId) return true;
-  const redis = getRedis();
-  const key = `rate:user:${userId}:weather_minute`;
-  const current = await redis.incr(key);
-  if (current === 1) await redis.expire(key, 60);
-  return current <= WEATHER_USER_MINUTE_LIMIT;
+  try {
+    const redis = getRedis();
+    const key = `rate:user:${userId}:weather_minute`;
+    const current = await redis.incr(key);
+    if (current === 1) await redis.expire(key, 60);
+    return current <= WEATHER_USER_MINUTE_LIMIT;
+  } catch (_) {
+    return true; // fail open
+  }
 }
 
 // ============================================================
-// UPDATED chatHandler – uses OpenRouter via LlmService
+// chatHandler — FIX: now passes plan so Pro/Premium get better models
 // ============================================================
 const chatHandler = withUsageLog(async (req, res) => {
   const { message, system } = req.body;
@@ -95,6 +99,7 @@ const chatHandler = withUsageLog(async (req, res) => {
     system,
     temperature: 0.7,
     maxTokens: 500,
+    plan: req.user?.plan || 'free',   // ← FIX: pass plan
   });
 
   res.json({
@@ -108,7 +113,7 @@ const chatHandler = withUsageLog(async (req, res) => {
 });
 
 // ============================================================
-// UPDATED weatherHandler – with per‑minute throttling
+// weatherHandler
 // ============================================================
 const weatherHandler = withUsageLog(async (req, res) => {
   const { city, lat, lon, units = 'metric' } = req.query;
@@ -117,7 +122,6 @@ const weatherHandler = withUsageLog(async (req, res) => {
     return res.status(400).json({ success: false, error: 'Provide `city` or `lat` + `lon`' });
   }
 
-  // Per‑minute limit check
   if (!(await checkWeatherMinuteLimit(req.user.id))) {
     return res.status(429).json({
       success: false,
@@ -126,14 +130,18 @@ const weatherHandler = withUsageLog(async (req, res) => {
   }
 
   if (process.env.WEATHER_API_KEY) {
-    const location = city ? `q=${encodeURIComponent(city)}` : `lat=${lat}&lon=${lon}`;
-    const resp = await axios.get(
-      `https://api.openweathermap.org/data/2.5/weather?${location}&units=${units}&appid=${process.env.WEATHER_API_KEY}`
-    );
-    return res.json({ success: true, weather: resp.data, source: 'openweathermap' });
+    try {
+      const location = city ? `q=${encodeURIComponent(city)}` : `lat=${lat}&lon=${lon}`;
+      const resp = await axios.get(
+        `https://api.openweathermap.org/data/2.5/weather?${location}&units=${units}&appid=${process.env.WEATHER_API_KEY}`,
+        { timeout: 8000 }
+      );
+      return res.json({ success: true, weather: resp.data, source: 'openweathermap' });
+    } catch (err) {
+      // fall through to mock on upstream failure
+    }
   }
 
-  // Mock response (no limit on mock)
   const unitLabel = units === 'imperial' ? '°F' : '°C';
   const mockTemps = { metric: { cur: 18, feels: 16, min: 13, max: 22 }, imperial: { cur: 64, feels: 61, min: 55, max: 72 } };
   const t = mockTemps[units] || mockTemps.metric;
@@ -159,7 +167,7 @@ const weatherHandler = withUsageLog(async (req, res) => {
 });
 
 // ============================================================
-// Other handlers (unchanged except imports)
+// imageAnalyzeHandler
 // ============================================================
 const imageAnalyzeHandler = withUsageLog(async (req, res) => {
   const { imageUrl, imageBase64 } = req.body;
@@ -193,6 +201,9 @@ const imageAnalyzeHandler = withUsageLog(async (req, res) => {
   });
 });
 
+// ============================================================
+// translateHandler
+// ============================================================
 const translateHandler = withUsageLog(async (req, res) => {
   const { text, targetLanguage, sourceLanguage = 'auto' } = req.body;
   if (!text?.trim()) return res.status(400).json({ success: false, error: '`text` is required' });
@@ -215,6 +226,9 @@ const translateHandler = withUsageLog(async (req, res) => {
   });
 });
 
+// ============================================================
+// sentimentHandler
+// ============================================================
 const sentimentHandler = withUsageLog(async (req, res) => {
   const { text } = req.body;
   if (!text?.trim()) return res.status(400).json({ success: false, error: '`text` is required' });
@@ -245,6 +259,9 @@ const sentimentHandler = withUsageLog(async (req, res) => {
   });
 });
 
+// ============================================================
+// summarizeHandler
+// ============================================================
 const summarizeHandler = withUsageLog(async (req, res) => {
   const { text, maxLength = 150, style = 'paragraph' } = req.body;
   if (!text?.trim()) return res.status(400).json({ success: false, error: '`text` is required' });
@@ -266,6 +283,9 @@ const summarizeHandler = withUsageLog(async (req, res) => {
   });
 });
 
+// ============================================================
+// geocodeHandler
+// ============================================================
 const geocodeHandler = withUsageLog(async (req, res) => {
   const { address, lat, lon } = req.query;
   if (!address && (!lat || !lon)) {

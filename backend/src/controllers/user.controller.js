@@ -5,12 +5,11 @@ const ApiModel     = require('../models/api.model');
 const ApiKeyService = require('../services/apiKey.service');
 const UsageService = require('../services/usage.service');
 const RateLimitService = require('../services/rateLimit.service');
-const AuthService = require('../services/auth.service'); 
+const AuthService = require('../services/auth.service');
 const { getRedis, KEYS, TTL } = require('../config/redis');
 const { PLANS } = require('../utils/constants');
 const logger = require('../utils/logger');
 
-// Stripe is optional - only load if configured
 let stripe = null;
 try {
   if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY !== 'sk_test_placeholder') {
@@ -24,6 +23,16 @@ const getCurrentSwitchCount = (user) => {
     ? String(user.switch_reset_at).slice(0, 10)
     : today;
   return resetDate < today ? 0 : user.api_switch_count;
+};
+
+// FIX: helper to invalidate all caches for a user
+const invalidateUserCaches = async (userId) => {
+  const redis = getRedis();
+  await Promise.allSettled([
+    redis.del(KEYS.userCache(userId)),
+    redis.del(`user:${userId}:plan`),
+    redis.del(KEYS.userApisCache(userId)),
+  ]);
 };
 
 const UserController = {
@@ -45,12 +54,6 @@ const UserController = {
 
       const planConfig = PLANS[plan];
 
-      // BUG FIX: `allApis` here came straight from ApiModel.findAll(), with
-      // no `selected` flag — but ApiKeyManager (on the dashboard page)
-      // filters `apis.filter(a => a.selected)` to build its "scope this key"
-      // list, so that list was always empty. Add the same
-      // selected/accessible/locked flags that UserController.getApis()
-      // already computes for the /api/user/apis endpoint.
       const userApiIds = new Set(userApis.map((a) => a.id));
       const planOrder = { free: 0, pro: 1, premium: 2 };
       const userPlanLevel = planOrder[plan] ?? 0;
@@ -72,18 +75,6 @@ const UserController = {
         recentRequests: recent,
       };
 
-      // BUG FIX: the frontend Dashboard page (Dashboard.jsx) reads its data
-      // from flat top-level fields — `data.todayUsage`, `data.dailyLimit`,
-      // `data.selectedApis`, `data.apis`, `data.apiKeys`, `data.recentRequests`,
-      // `data.apiBreakdown`, `data.usageHistory` — but this endpoint only ever
-      // nested everything under `dashboard: {...}`. Since
-      // dashboardService.getDashboard() returns the raw response body, every
-      // one of those lookups was undefined and the dashboard silently
-      // rendered as empty (0 requests, no charts, no active APIs, no keys)
-      // regardless of actual usage. Emitting the same data at the top level
-      // (in addition to the nested `dashboard` object, kept for backwards
-      // compatibility with anything else reading it) fixes this without
-      // requiring a frontend contract change.
       res.json({
         success: true,
         dashboard,
@@ -128,9 +119,9 @@ const UserController = {
 
       const validPlans = ['free', 'pro', 'premium'];
       if (!validPlans.includes(plan)) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Invalid plan. Choose from: free, pro, premium' 
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid plan. Choose from: free, pro, premium'
         });
       }
 
@@ -145,22 +136,15 @@ const UserController = {
       if (plan === 'premium') {
         const allApis = await ApiModel.findAll();
         await Promise.all(allApis.map(api => ApiModel.grantAccess(userId, api.id)));
-        
-        const redis = getRedis();
-        await redis.del(KEYS.userApisCache(userId)).catch(() => {});
       }
 
-      const redis = getRedis();
-      await redis.del(KEYS.userCache(userId)).catch(() => {});
+      // FIX: invalidate ALL user caches including the plan cache used by rate limiter
+      await invalidateUserCaches(userId);
 
       logger.info(`User ${userId} selected plan: ${plan}`);
 
-      // ✅ Generate new JWT token with updated plan
       const tokenResult = await AuthService.refreshToken(userId);
 
-      logger.info(`New token generated for user ${userId} with plan ${plan}`);
-
-      // ✅ Return token in response
       res.json({
         success: true,
         message: `Plan updated to ${plan} successfully!`,
@@ -187,14 +171,14 @@ const UserController = {
     try {
       const currentPlan = req.user?.plan || 'free';
       const allApis = await ApiModel.findAll();
-      
+
       const plans = Object.keys(PLANS).map(planKey => {
         const planData = PLANS[planKey];
         const planOrder = { free: 0, pro: 1, premium: 2 };
         const apisForPlan = allApis.filter(api => {
           return planOrder[api.min_plan] <= planOrder[planKey];
         });
-        
+
         return {
           key: planKey,
           name: planData.name,
@@ -231,15 +215,15 @@ const UserController = {
     try {
       const allApis = await ApiModel.findAll();
       const planOrder = { free: 0, pro: 1, premium: 2 };
-      
+
       const features = {};
-      
+
       Object.keys(PLANS).forEach(planKey => {
         const planData = PLANS[planKey];
         const apisForPlan = allApis.filter(api => {
           return planOrder[api.min_plan] <= planOrder[planKey];
         });
-        
+
         features[planKey] = {
           name: planData.name,
           dailyRequests: planData.dailyLimit,
@@ -278,9 +262,9 @@ const UserController = {
       const planConfig = PLANS[plan];
 
       if (plan === 'premium') {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Premium users have access to all APIs automatically' 
+        return res.status(400).json({
+          success: false,
+          error: 'Premium users have access to all APIs automatically'
         });
       }
 
@@ -318,8 +302,7 @@ const UserController = {
       await ApiModel.grantAccess(userId, apiId);
       await UserModel.incrementSwitchCount(userId);
 
-      const redis = getRedis();
-      await redis.del(KEYS.userApisCache(userId)).catch(() => {});
+      await invalidateUserCaches(userId);
 
       res.json({ success: true, message: `Access granted to ${api.name}` });
     } catch (err) {
@@ -349,8 +332,7 @@ const UserController = {
       await ApiModel.revokeAccess(userId, apiId);
       await UserModel.incrementSwitchCount(userId);
 
-      const redis = getRedis();
-      await redis.del(KEYS.userApisCache(userId)).catch(() => {});
+      await invalidateUserCaches(userId);
 
       res.json({ success: true, message: 'API access removed' });
     } catch (err) {
@@ -395,7 +377,7 @@ const UserController = {
   createKey: async (req, res) => {
     try {
       const { label, keyType, scopedApis, expiresAt } = req.body;
-      
+
       const key = await ApiKeyService.create({
         userId: req.user.id,
         label: label || 'My Key',
@@ -403,7 +385,7 @@ const UserController = {
         scopedApis: Array.isArray(scopedApis) && scopedApis.length ? scopedApis : null,
         expiresAt: expiresAt || null,
       });
-      
+
       res.status(201).json({
         success: true,
         message: '⚠ Store the rawKey securely — it will NOT be shown again.',
@@ -430,7 +412,7 @@ const UserController = {
     try {
       const { keyId } = req.params;
       const { scopedApis } = req.body;
-      
+
       const updated = await ApiKeyService.updateScopes(keyId, req.user.id, scopedApis);
       res.json({ success: true, key: updated });
     } catch (err) {
@@ -443,7 +425,7 @@ const UserController = {
   createCheckoutSession: async (req, res) => {
     try {
       const { plan } = req.body;
-      
+
       if (!stripe) {
         return res.status(501).json({
           success: false,
@@ -457,14 +439,14 @@ const UserController = {
         pro: process.env.STRIPE_PRICE_ID_PRO,
         premium: process.env.STRIPE_PRICE_ID_PREMIUM
       };
-      
+
       if (!planPrices[plan]) {
         return res.status(400).json({ success: false, error: 'Invalid plan or missing Stripe price ID' });
       }
 
       let user = await UserModel.findById(req.user.id);
       let customerId = user.stripe_customer_id;
-      
+
       if (!customerId) {
         const customer = await stripe.customers.create({
           email: user.email,
@@ -484,7 +466,7 @@ const UserController = {
         client_reference_id: req.user.id,
         metadata: { userId: req.user.id, plan }
       });
-      
+
       res.json({ success: true, url: session.url });
     } catch (err) {
       logger.error('Checkout error', { error: err.message });
@@ -513,15 +495,15 @@ const UserController = {
       const redis = getRedis();
       const idempotencyKey = KEYS.webhookEvent(event.id);
       const alreadyProcessed = await redis.set(idempotencyKey, '1', 'NX', 'EX', TTL.ONE_WEEK);
-      
+
       if (!alreadyProcessed) {
         logger.info(`Webhook event ${event.id} already processed. Skipping.`);
         return res.json({ received: true });
       }
 
       const subscriptionEvents = [
-        'customer.subscription.updated', 
-        'customer.subscription.created', 
+        'customer.subscription.updated',
+        'customer.subscription.created',
         'customer.subscription.deleted'
       ];
 
@@ -530,7 +512,7 @@ const UserController = {
         const customerId = subscription.customer;
         const status = subscription.status;
         const priceId = subscription.items.data[0].price.id;
-        
+
         let plan = 'free';
         if (status === 'active' || status === 'trialing') {
           if (priceId === process.env.STRIPE_PRICE_ID_PRO) plan = 'pro';
@@ -538,7 +520,7 @@ const UserController = {
         }
 
         let userId = subscription.metadata?.userId;
-        
+
         if (!userId) {
           const db = require('../config/db');
           const userRes = await db.query('SELECT id FROM users WHERE stripe_customer_id = $1', [customerId]);
@@ -549,13 +531,13 @@ const UserController = {
           await UserModel.updatePlan(userId, plan);
           await UserModel.updateStripeSubscription(userId, subscription.id, status, priceId);
 
-          const redis = getRedis();
-          await redis.del(KEYS.userCache(userId)).catch(() => {});
+          // FIX: invalidate all user caches
+          await invalidateUserCaches(userId);
 
           if (plan === 'premium') {
             const allApis = await ApiModel.findAll();
             await Promise.all(allApis.map(a => ApiModel.grantAccess(userId, a.id)));
-            await redis.del(KEYS.userApisCache(userId)).catch(() => {});
+            await invalidateUserCaches(userId);
           }
         } else {
           logger.warn(`Stripe webhook: User not found for customer ${customerId}`);

@@ -2,7 +2,6 @@
 const logger = require('../utils/logger');
 
 const requiredEnvs = [
-  'DATABASE_URL',
   'JWT_SECRET',
   'PEPPER',
   'API_KEY_SECRET'
@@ -16,9 +15,9 @@ const validateEnv = () => {
     }
   }
 
-  // Allow DB_HOST instead of DATABASE_URL if in dev
-  if (missing.includes('DATABASE_URL') && process.env.DB_HOST) {
-    missing.splice(missing.indexOf('DATABASE_URL'), 1);
+  // Require DATABASE_URL OR DB_HOST
+  if (!process.env.DATABASE_URL && !process.env.DB_HOST) {
+    missing.push('DATABASE_URL (or DB_HOST)');
   }
 
   // Require Stripe only in production
@@ -33,13 +32,11 @@ const validateEnv = () => {
 
   if (missing.length > 0) {
     const msg = `FATAL: Missing required environment variables: ${missing.join(', ')}`;
-    // Log to stderr (always visible)
     console.error(msg);
-    // Also try to log via logger if available
     if (logger && logger.error) {
       logger.error(msg);
     }
-    throw new Error(msg);   // Stop the server with a clear error
+    throw new Error(msg);
   }
 };
 

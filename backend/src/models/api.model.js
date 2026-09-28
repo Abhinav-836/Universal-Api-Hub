@@ -2,9 +2,6 @@
 const db = require('../config/db');
 
 const ApiModel = {
-  /**
-   * Get all active APIs
-   */
   findAll: async () => {
     const result = await db.query(
       'SELECT * FROM apis WHERE is_active = TRUE ORDER BY category, min_plan, name'
@@ -12,9 +9,6 @@ const ApiModel = {
     return result.rows;
   },
 
-  /**
-   * Get API by slug
-   */
   findBySlug: async (slug) => {
     const result = await db.query(
       'SELECT * FROM apis WHERE slug = $1 AND is_active = TRUE',
@@ -23,13 +17,9 @@ const ApiModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Get APIs accessible by a given plan
-   */
   findByPlan: async (plan) => {
     const planOrder = { free: 0, pro: 1, premium: 2 };
     const planLevel = planOrder[plan] ?? 0;
-    // Return APIs whose min_plan level <= user's plan level
     const result = await db.query(
       `SELECT * FROM apis
        WHERE is_active = TRUE
@@ -44,9 +34,6 @@ const ApiModel = {
     return result.rows;
   },
 
-  /**
-   * Get APIs selected by a user
-   */
   findUserApis: async (userId) => {
     const result = await db.query(
       `SELECT a.*
@@ -59,9 +46,6 @@ const ApiModel = {
     return result.rows;
   },
 
-  /**
-   * Grant API access to a user
-   */
   grantAccess: async (userId, apiId) => {
     const result = await db.query(
       `INSERT INTO user_api_access (user_id, api_id)
@@ -73,9 +57,6 @@ const ApiModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Revoke API access from a user
-   */
   revokeAccess: async (userId, apiId) => {
     const result = await db.query(
       `DELETE FROM user_api_access
@@ -86,9 +67,6 @@ const ApiModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Count APIs a user has selected
-   */
   countUserApis: async (userId) => {
     const result = await db.query(
       'SELECT COUNT(*) FROM user_api_access WHERE user_id = $1',
@@ -97,9 +75,6 @@ const ApiModel = {
     return parseInt(result.rows[0].count);
   },
 
-  /**
-   * Check if user has access to a specific API slug
-   */
   userHasAccess: async (userId, slug) => {
     const result = await db.query(
       `SELECT 1 FROM user_api_access uaa
@@ -110,9 +85,6 @@ const ApiModel = {
     return result.rows.length > 0;
   },
 
-  /**
-   * Get API by its ID
-   */
   findById: async (id) => {
     const result = await db.query(
       'SELECT * FROM apis WHERE id = $1 AND is_active = TRUE',

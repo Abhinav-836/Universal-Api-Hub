@@ -54,33 +54,16 @@ const testConnection = async () => {
   }
 };
 
-// Redis key helpers
 const KEYS = {
-  // Rate limiting: daily request counter per user
   userDailyUsage: (userId) => `rate:user:${userId}:daily`,
-
-  // Rate limiting: IP abuse protection
   ipRequests: (ip) => `rate:ip:${ip}:requests`,
-
-  // API switch count per user
   userSwitchCount: (userId) => `user:${userId}:switch_count`,
-
-  // Cached user data
   userCache: (userId) => `cache:user:${userId}`,
-
-  // Cached API key lookup
   apiKeyCache: (keyPrefix) => `cache:apikey:${keyPrefix}`,
-
-  // Cached APIs list
   apisCache: () => 'cache:apis:all',
-
-  // User's accessible APIs
   userApisCache: (userId) => `cache:user:${userId}:apis`,
-
-  // External API caches
   newsCache: (key) => `cache:news:${key}`,
   sportsCache: (key) => `cache:sports:${key}`,
-
   webhookEvent: (eventId) => `webhook_event:${eventId}`,
 };
 

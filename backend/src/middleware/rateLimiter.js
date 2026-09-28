@@ -1,10 +1,10 @@
 // backend/src/middleware/rateLimiter.js
 const RateLimitService = require('../services/rateLimit.service');
 const UsageService = require('../services/usage.service');
+const logger = require('../utils/logger');
 
 const emergencyMemoryCache = new Map();
 
-// Cleanup emergency memory cache periodically to prevent leaks
 const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, val] of emergencyMemoryCache.entries()) {
@@ -13,11 +13,7 @@ const cleanupInterval = setInterval(() => {
 }, 60000);
 
 if (cleanupInterval.unref) cleanupInterval.unref();
-const logger = require('../utils/logger');
 
-/**
- * IP-based abuse protection (applied globally)
- */
 const ipRateLimit = async (req, res, next) => {
   try {
     const ip = req.ip || req.socket.remoteAddress;
@@ -33,7 +29,6 @@ const ipRateLimit = async (req, res, next) => {
     next();
   } catch (err) {
     logger.error('IP rate limit check failed. Using degraded mode.', { error: err.message });
-    // Emergency IP in-memory fallback (60s sliding window)
     const ip = req.ip || req.socket.remoteAddress;
     if (ip) {
       const now = Date.now();
@@ -46,8 +41,8 @@ const ipRateLimit = async (req, res, next) => {
         state.resetAt = now + 60000;
       }
       state.count += 1;
-      
-      if (state.count > 50) { // strict emergency IP quota: 50 per 60s
+
+      if (state.count > 50) {
         return res.status(429).json({ success: false, error: 'Emergency IP rate limit exceeded' });
       }
     }
@@ -55,22 +50,16 @@ const ipRateLimit = async (req, res, next) => {
   }
 };
 
-/**
- * Per-user weighted rate limiter (applied to /api/v1/* routes)
- * Must run AFTER apiKeyAuth (needs req.user and req.apiSlug)
- */
 const userRateLimit = async (req, res, next) => {
   try {
     const userId = req.user?.id;
     const plan   = req.user?.plan || 'free';
-    const slug   = req.apiSlug || 'unknown';
     const cost   = req.apiCost ?? 1;
 
     if (!userId) return next();
 
     const result = await RateLimitService.checkAndIncrement(userId, plan, cost);
 
-    // Set rate limit headers
     res.set({
       'X-RateLimit-Limit':     result.limit,
       'X-RateLimit-Remaining': Math.max(0, result.remaining),
@@ -97,13 +86,11 @@ const userRateLimit = async (req, res, next) => {
       res.set('X-RateLimit-Warning', `You have used ${Math.round((result.used / result.limit) * 100)}% of your daily limit`);
     }
 
-    // Attach cost to request for usage logging
     req.costWeight = cost;
     next();
   } catch (err) {
     logger.error('User rate limit error. Using emergency memory fallback.', { error: err.message });
-    
-    // Emergency in-memory fallback (30s sliding window)
+
     const userId = req.user?.id;
     if (userId) {
       const now = Date.now();
@@ -117,8 +104,8 @@ const userRateLimit = async (req, res, next) => {
       }
       const cost = req.apiCost ?? 1;
       state.count += cost;
-      
-      if (state.count > 10) { // strict emergency quota: 10 per 30s
+
+      if (state.count > 10) {
         return res.status(429).json({ success: false, error: 'Emergency rate limit exceeded' });
       }
     }

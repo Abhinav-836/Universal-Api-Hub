@@ -6,4 +6,6 @@ CREATE TABLE IF NOT EXISTS user_api_access (
     granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, api_id)
 );
-CREATE INDEX idx_user_api_access_user ON user_api_access(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_api_access_user ON user_api_access(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_api_access_api ON user_api_access(api_id);

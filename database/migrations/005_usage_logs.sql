@@ -1,9 +1,9 @@
 -- Migration 005: Usage Logs
 DO $$
 BEGIN
-    CREATE TYPE log_status AS ENUM ('success', 'rate_limited', 'unauthorized', 'error');
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'log_status') THEN
+        CREATE TYPE log_status AS ENUM ('success', 'rate_limited', 'unauthorized', 'error');
+    END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS usage_logs (
@@ -23,6 +23,6 @@ CREATE TABLE IF NOT EXISTS usage_logs (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_usage_logs_user_id   ON usage_logs(user_id);
-CREATE INDEX idx_usage_logs_created   ON usage_logs(created_at);
-CREATE INDEX idx_usage_logs_api_id    ON usage_logs(api_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_user_id    ON usage_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_created_at ON usage_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_api_id     ON usage_logs(api_id);

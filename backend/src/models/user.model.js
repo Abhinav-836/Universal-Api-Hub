@@ -2,9 +2,6 @@
 const db = require('../config/db');
 
 const UserModel = {
-  /**
-   * Find user by email
-   */
   findByEmail: async (email) => {
     const result = await db.query(
       `SELECT id, email, username, plan, password_hash,
@@ -15,25 +12,17 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Find user by ID
-   */
   findById: async (id) => {
     const result = await db.query(
-      `SELECT id, email, username, plan, api_switch_count, switch_reset_at, 
-              is_active, created_at, stripe_customer_id, stripe_subscription_id, 
-              stripe_price_id, billing_status 
+      `SELECT id, email, username, plan, api_switch_count, switch_reset_at,
+              is_active, created_at, stripe_customer_id, stripe_subscription_id,
+              stripe_price_id, billing_status
        FROM users WHERE id = $1`,
       [id]
     );
     return result.rows[0] || null;
   },
 
-  /**
-   * Find user by ID including password_hash (for password-change flows).
-   * Kept separate from findById so the normal cached user lookup never
-   * accidentally carries the hash into a response or the Redis cache.
-   */
   findByIdWithPassword: async (id) => {
     const result = await db.query(
       'SELECT id, email, username, plan, password_hash, is_active FROM users WHERE id = $1',
@@ -42,9 +31,6 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Find user by username
-   */
   findByUsername: async (username) => {
     const result = await db.query(
       'SELECT * FROM users WHERE username = $1 AND is_active = TRUE',
@@ -53,9 +39,6 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Create a new user
-   */
   create: async ({ email, username, passwordHash }) => {
     const result = await db.query(
       `INSERT INTO users (email, username, password_hash)
@@ -66,12 +49,9 @@ const UserModel = {
     return result.rows[0];
   },
 
-  /**
-   * Update user plan
-   */
   updatePlan: async (userId, plan) => {
     const result = await db.query(
-      `UPDATE users 
+      `UPDATE users
        SET plan = $1, updated_at = NOW()
        WHERE id = $2
        RETURNING id, email, username, plan, created_at`,
@@ -80,9 +60,6 @@ const UserModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Increment API switch count (and reset daily if needed)
-   */
   incrementSwitchCount: async (userId) => {
     const result = await db.query(
       `UPDATE users
@@ -99,9 +76,6 @@ const UserModel = {
     return result.rows[0];
   },
 
-  /**
-   * Check if user exists by email or username
-   */
   existsByEmailOrUsername: async (email, username) => {
     const result = await db.query(
       'SELECT id FROM users WHERE email = $1 OR username = $2',
@@ -110,9 +84,6 @@ const UserModel = {
     return result.rows.length > 0;
   },
 
-  /**
-   * Update a user's password hash
-   */
   updatePassword: async (userId, passwordHash) => {
     await db.query(
       'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
@@ -120,9 +91,6 @@ const UserModel = {
     );
   },
 
-  /**
-   * Update Stripe customer ID
-   */
   updateStripeCustomer: async (userId, stripeCustomerId) => {
     await db.query(
       'UPDATE users SET stripe_customer_id = $1, updated_at = NOW() WHERE id = $2',
@@ -130,16 +98,13 @@ const UserModel = {
     );
   },
 
-  /**
-   * Update Stripe subscription ID and billing status
-   */
   updateStripeSubscription: async (userId, subscriptionId, status, priceId) => {
     await db.query(
-      `UPDATE users 
-       SET stripe_subscription_id = $1, 
-           billing_status = $2, 
-           stripe_price_id = $3, 
-           updated_at = NOW() 
+      `UPDATE users
+       SET stripe_subscription_id = $1,
+           billing_status = $2,
+           stripe_price_id = $3,
+           updated_at = NOW()
        WHERE id = $4`,
       [subscriptionId, status, priceId, userId]
     );

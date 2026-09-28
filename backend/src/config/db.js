@@ -2,23 +2,7 @@
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
 
-// ── BUG FIX ────────────────────────────────────────────────────────────────
-// Previously this file ignored DATABASE_URL / DB_HOST / DB_USER / DB_PASSWORD
-// entirely and hardcoded a specific Supabase project's host + username.
-// That meant:
-//   1. Changing DATABASE_URL (or any DB_* var) in .env had zero effect.
-//   2. The app could never be pointed at a different database/environment
-//      (staging, another developer's Supabase project, CI, etc.) without
-//      editing this file's source code.
-//   3. A live project reference was baked into source control.
-// Fixed to build the pool config from environment variables, preferring a
-// full DATABASE_URL connection string (the standard convention, and what
-// env.js already validates as required) and falling back to discrete
-// DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD vars for local dev.
 const parseSslOption = () => {
-  // DB_SSL=false disables SSL (e.g. local Postgres). Default: on, with
-  // rejectUnauthorized disabled since most managed providers (Supabase,
-  // Render, etc.) use certs that aren't in Node's default CA bundle.
   if (String(process.env.DB_SSL).toLowerCase() === 'false') return false;
   return { rejectUnauthorized: false };
 };
@@ -39,7 +23,6 @@ const buildPoolConfig = () => {
     };
   }
 
-  // Fallback to discrete vars (useful for local development)
   return {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT) || 5432,
@@ -53,7 +36,6 @@ const buildPoolConfig = () => {
 
 const poolConfig = buildPoolConfig();
 
-// Validate we actually have something to connect with
 if (!process.env.DATABASE_URL && !process.env.DB_HOST) {
   const msg = 'FATAL: Neither DATABASE_URL nor DB_HOST is set. Cannot connect to PostgreSQL.';
   logger.error(msg);

@@ -22,9 +22,8 @@ const {
   cryptoHandler,
 } = require('../controllers/market.controller');
 
-const router = express.Router();  // <-- THIS WAS MISSING
+const router = express.Router();
 
-// Helper to validate and pipe through middleware
 const checkValidation = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -40,8 +39,6 @@ const pipe = (slug, handler) => [
   checkValidation,
   handler,
 ];
-
-// ── Routes ─────────────────────────────────────────────────────────
 
 router.post('/v1/chat', [
   body('message').isString().trim().notEmpty().withMessage('Message is required').isLength({ max: 2000 }),
@@ -110,7 +107,6 @@ router.post('/v1/llm/chat', [
   body('maxTokens').optional().isInt({ min: 1, max: 1000 }),
 ], ...pipe('llm-chat', llmChatHandler));
 
-// ── Market Routes (Alpha Vantage) ──────────────────────────────────
 router.get('/v1/stocks/quote', [
   query('symbol').isString().trim().notEmpty().isLength({ min: 1, max: 10 }),
 ], ...pipe('stock-quote', stockQuoteHandler));

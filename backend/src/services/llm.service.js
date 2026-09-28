@@ -7,25 +7,22 @@ const getBaseUrl = () =>
 
 const getApiKey = () => process.env.OPENROUTER_API_KEY || '';
 
-// Get models based on plan
 const getModelsForPlan = (plan = 'free') => {
   const modelsMap = {
     free: process.env.OPENROUTER_MODEL_FREE || 'google/gemini-2.0-flash-exp:free',
-    pro: process.env.OPENROUTER_MODEL_PRO || 'openai/gpt-4o-2024-11-20',
-    premium: process.env.OPENROUTER_MODEL_ALL || 'openai/gpt-4o-2024-11-20,anthropic/claude-3.5-sonnet-20240620',
+    pro: process.env.OPENROUTER_MODEL_PRO || 'openai/gpt-4o-mini',
+    premium: process.env.OPENROUTER_MODEL_ALL || 'openai/gpt-4o,anthropic/claude-3.5-sonnet',
   };
-  
+
   const models = modelsMap[plan] || modelsMap.free;
   return models.split(',').map(m => m.trim()).filter(Boolean);
 };
 
-// Get primary model for a plan
 const getPrimaryModel = (plan = 'free') => {
   const models = getModelsForPlan(plan);
   return models.length > 0 ? models[0] : 'openai/gpt-3.5-turbo';
 };
 
-// Mock fallback (only if API completely fails)
 const mockReply = (message) => ({
   source: 'mock',
   reply: `[Mock] ${message.slice(0, 160)}`,
@@ -38,16 +35,17 @@ const mockReply = (message) => ({
 });
 
 const LlmService = {
-  chat: async ({ message, system, temperature = 0.4, maxTokens = 500, plan = 'free' }) => {
+  chat: async ({ message, system, temperature = 0.4, maxTokens = 500, plan = 'free', model: requestedModel }) => {
     const apiKey = getApiKey();
     const baseUrl = getBaseUrl();
-    const model = getPrimaryModel(plan);
     const availableModels = getModelsForPlan(plan);
 
-    console.log('🔑 API Key loaded:', apiKey ? '✅ Yes' : '❌ No');
-    console.log('📡 Base URL:', baseUrl);
-    console.log('🤖 Model:', model);
-    console.log('📋 Plan:', plan);
+    // FIX: allow user to pass a specific model but only if it's in their plan's allowed list
+    let model = requestedModel && availableModels.includes(requestedModel)
+      ? requestedModel
+      : getPrimaryModel(plan);
+
+    logger.debug('LLM request', { model, plan, hasApiKey: !!apiKey });
 
     if (!apiKey || apiKey === 'sk-or-v1-placeholder_replace_with_real_key' || apiKey.includes('xxxxx')) {
       logger.warn('No valid OpenRouter API key, using mock response');
@@ -65,55 +63,45 @@ const LlmService = {
             ...(system ? [{ role: 'system', content: system }] : []),
             { role: 'user', content: message },
           ],
-          // Add this to help with model availability
-          ...(model.includes(':free') ? { // For free models
-            extra_body: {
-              provider: { order: ['OpenRouter', 'Together', 'Azure'] }
-            }
-          } : {}),
         },
         {
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://universal-api-hub.com',
+            'HTTP-Referer': process.env.FRONTEND_URL || 'https://universal-api-hub.com',
             'X-Title': 'Universal API Hub',
           },
-          timeout: 15000,
+          timeout: 30000,
         }
       );
 
       const choice = response.data.choices?.[0];
-      const result = {
+      return {
         source: 'openrouter',
         reply: choice?.message?.content || '',
         model: response.data.model || model,
         usage: response.data.usage || null,
         finishReason: choice?.finish_reason || 'stop',
-        availableModels: availableModels,
-        plan: plan,
+        availableModels,
+        plan,
       };
-
-      console.log('✅ OpenRouter response received!');
-      return result;
     } catch (err) {
-      console.error('❌ OpenRouter error:', err.message);
-      logger.error('OpenRouter request failed', { 
+      logger.error('OpenRouter request failed', {
         error: err.message,
-        model: model,
-        plan: plan,
+        model,
+        plan,
         status: err.response?.status,
-        data: err.response?.data
+        data: err.response?.data,
       });
-      
-      // If model not found, try fallback to a known working model
-      if (err.response?.status === 404 && model.includes('mistralai')) {
-        console.log('🔄 Trying fallback model: google/gemini-2.0-flash-exp:free');
+
+      // Fallback to a known working model if the requested one 404s
+      if (err.response?.status === 404) {
         try {
+          const fallbackModel = 'google/gemini-2.0-flash-exp:free';
           const fallbackResponse = await axios.post(
             `${baseUrl}/chat/completions`,
             {
-              model: 'google/gemini-2.0-flash-exp:free',
+              model: fallbackModel,
               temperature,
               max_tokens: maxTokens,
               messages: [
@@ -125,33 +113,33 @@ const LlmService = {
               headers: {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://universal-api-hub.com',
+                'HTTP-Referer': process.env.FRONTEND_URL || 'https://universal-api-hub.com',
                 'X-Title': 'Universal API Hub',
               },
-              timeout: 15000,
+              timeout: 30000,
             }
           );
           const choice = fallbackResponse.data.choices?.[0];
           return {
             source: 'openrouter-fallback',
             reply: choice?.message?.content || '',
-            model: 'google/gemini-2.0-flash-exp:free',
+            model: fallbackModel,
             usage: fallbackResponse.data.usage || null,
             finishReason: choice?.finish_reason || 'stop',
-            availableModels: ['google/gemini-2.0-flash-exp:free'],
-            plan: plan,
+            availableModels: [fallbackModel],
+            plan,
           };
         } catch (fallbackErr) {
-          console.error('❌ Fallback also failed:', fallbackErr.message);
+          logger.error('Fallback LLM also failed', { error: fallbackErr.message });
         }
       }
-      
-      // If API fails, fallback to mock
+
       return {
         ...mockReply(message),
         source: 'mock-fallback',
-        plan: plan,
+        plan,
         error: err.message,
+        availableModels,
       };
     }
   },
