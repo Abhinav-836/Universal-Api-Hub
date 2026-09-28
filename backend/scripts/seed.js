@@ -4,16 +4,22 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
+// Same SSL decision as scripts/migrate.js — see the comment there.
+const parseSsl = () => {
+  if (String(process.env.DB_SSL).toLowerCase() === 'false') return false;
+  return { rejectUnauthorized: false };
+};
+
 const config = process.env.DATABASE_URL ? {
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: parseSsl(),
 } : {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT) || 5432,
   database: process.env.DB_NAME || 'postgres',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || '',
-  ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
+  ssl: parseSsl(),
 };
 
 async function seed() {
