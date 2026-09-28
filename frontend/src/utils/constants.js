@@ -35,7 +35,7 @@ export const PLANS = {
     name: 'Premium',
     price: '$49',
     dailyLimit: 200,
-    apiSlots: Infinity,
+    apiSlots: 10,
     switchesPerDay: Infinity,
     badge: 'bg-purple-700 text-purple-200',
     badgeColor: 'bg-purple-700',

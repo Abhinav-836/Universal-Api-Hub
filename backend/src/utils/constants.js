@@ -37,7 +37,7 @@ const PLANS = {
   premium: {
     name: 'Premium',
     dailyLimit: 200,
-    apiSlots: Infinity,
+    apiSlots: 10,
     switchesPerDay: Infinity,
     allowedTiers: ['free', 'pro', 'premium'],
     alphaVantageCallsPerMin: 25,
