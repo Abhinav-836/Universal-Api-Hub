@@ -1,4 +1,4 @@
-// frontend/src/contexts/AuthContext.jsx
+// frontend/src/context/AuthContext.jsx
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { authService } from '../services/auth';
 
@@ -15,19 +15,19 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     isMounted.current = true;
-    
+
     const init = async () => {
       if (initCalled.current) {
         console.log('⏭️ Auth init already in progress, skipping...');
         return;
       }
-      
+
       initCalled.current = true;
       console.log('🔐 Checking authentication status...');
 
       try {
         const token = localStorage.getItem('auth_token');
-        
+
         if (!token) {
           console.log('ℹ️ No token found, user is not authenticated');
           if (isMounted.current) {
@@ -40,7 +40,7 @@ export const AuthProvider = ({ children }) => {
         }
 
         const data = await authService.me();
-        
+
         if (isMounted.current && data?.success && data?.user) {
           console.log('✅ Authentication successful:', data.user.email);
           setUser(data.user);
@@ -54,7 +54,7 @@ export const AuthProvider = ({ children }) => {
         }
       } catch (err) {
         console.error('❌ Auth check failed:', err.message);
-        
+
         if (err.response?.status === 429) {
           console.log('⏳ Rate limited, will retry...');
           setAuthError('Too many requests. Please try again later.');
@@ -69,7 +69,7 @@ export const AuthProvider = ({ children }) => {
         } else {
           setAuthError(err.message || 'Authentication error');
         }
-        
+
         if (isMounted.current) {
           setUser(null);
         }
@@ -83,7 +83,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     const timeoutId = setTimeout(init, 300);
-    
+
     return () => {
       isMounted.current = false;
       clearTimeout(timeoutId);
@@ -92,17 +92,15 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  // ✅ IMPROVED: forceRefresh with token check
   const forceRefresh = useCallback(async () => {
     console.log('🔄 Force refreshing user data...');
-    
-    // ✅ Check if token exists first
+
     const token = localStorage.getItem('auth_token');
     if (!token) {
       console.log('ℹ️ No token found, cannot refresh');
       return null;
     }
-    
+
     try {
       const data = await authService.me();
       if (isMounted.current && data?.success && data?.user) {
@@ -113,7 +111,6 @@ export const AuthProvider = ({ children }) => {
       return null;
     } catch (err) {
       console.error('❌ Force refresh failed:', err);
-      // ✅ Clear token on 401
       if (err.response?.status === 401) {
         localStorage.removeItem('auth_token');
         if (isMounted.current) {
@@ -127,11 +124,11 @@ export const AuthProvider = ({ children }) => {
   const login = useCallback(async (credentials) => {
     setLoading(true);
     setAuthError(null);
-    
+
     try {
       console.log('🔑 Attempting login for:', credentials.email);
       const data = await authService.login(credentials);
-      
+
       if (data?.success && data?.user) {
         console.log('✅ Login successful:', data.user.email);
         setUser(data.user);
@@ -143,25 +140,36 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('❌ Login error:', err.message);
-      
+
+      // BUG FIX: This catch block previously threw a plain new Error(...),
+      // which discarded the original axios error (and therefore its
+      // `response.data.error`). Login.jsx then read `err.response?.data?.error`
+      // and always saw undefined, so it fell back to a generic message — and
+      // because the AuthContext ALSO held its own authError state, the two
+      // error channels could desync and the red banner would never render.
+      // Now we always compute a friendly message, keep the axios `response`
+      // attached, and re-throw so the caller has full context.
+
+      let friendlyMessage;
       if (err.response?.status === 429) {
-        setAuthAttempts(prev => prev + 1);
-        setAuthError('Too many login attempts. Please wait a moment.');
-        throw new Error('Too many login attempts. Please wait a moment.');
+        friendlyMessage = 'Too many login attempts. Please wait a moment.';
+        setAuthAttempts((prev) => prev + 1);
+      } else if (err.response?.status === 401) {
+        friendlyMessage = 'Invalid email or password';
+      } else if (err.code === 'ERR_NETWORK') {
+        friendlyMessage = 'Network error. Please check your connection.';
+      } else {
+        friendlyMessage =
+          err.response?.data?.error || err.message || 'Login failed';
       }
-      
-      if (err.response?.status === 401) {
-        setAuthError('Invalid email or password');
-        throw new Error('Invalid email or password');
-      }
-      
-      if (err.code === 'ERR_NETWORK') {
-        setAuthError('Network error. Please check your connection.');
-        throw new Error('Network error. Please check your connection.');
-      }
-      
-      setAuthError(err.message || 'Login failed');
-      throw err;
+
+      setAuthError(friendlyMessage);
+
+      const enhanced = new Error(friendlyMessage);
+      enhanced.response = err.response;
+      enhanced.code = err.code;
+      enhanced.status = err.response?.status;
+      throw enhanced;
     } finally {
       setLoading(false);
     }
@@ -170,11 +178,11 @@ export const AuthProvider = ({ children }) => {
   const register = useCallback(async (data) => {
     setLoading(true);
     setAuthError(null);
-    
+
     try {
       console.log('📝 Registering user:', data.email);
       const result = await authService.register(data);
-      
+
       if (result?.success && result?.user) {
         console.log('✅ Registration successful:', result.user.email);
         setUser(result.user);
@@ -185,8 +193,20 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('❌ Registration error:', err.message);
-      setAuthError(err.message || 'Registration failed');
-      throw err;
+
+      // Same treatment as login: keep the axios response attached.
+      const friendlyMessage =
+        err.response?.data?.error ||
+        err.response?.data?.errors?.[0]?.msg ||
+        err.message ||
+        'Registration failed';
+
+      setAuthError(friendlyMessage);
+
+      const enhanced = new Error(friendlyMessage);
+      enhanced.response = err.response;
+      enhanced.status = err.response?.status;
+      throw enhanced;
     } finally {
       setLoading(false);
     }
@@ -221,6 +241,7 @@ export const AuthProvider = ({ children }) => {
     });
   }, []);
 
+  // Auto-clear the context-level error banner after 5s
   useEffect(() => {
     if (authError) {
       const timer = setTimeout(() => {

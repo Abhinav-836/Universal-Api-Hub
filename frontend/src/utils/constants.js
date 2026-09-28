@@ -80,8 +80,8 @@ export const groupApisByCategory = (apis = []) => {
   });
   return Array.from(groups.entries())
     .sort(([a], [b]) => {
-      const ia = CATEGORY_ORDER.indexOf(a),
-        ib = CATEGORY_ORDER.indexOf(b);
+      const ia = CATEGORY_ORDER.indexOf(a);
+      const ib = CATEGORY_ORDER.indexOf(b);
       const sa = ia === -1 ? CATEGORY_ORDER.length : ia;
       const sb = ib === -1 ? CATEGORY_ORDER.length : ib;
       return sa - sb || a.localeCompare(b);
@@ -97,5 +97,5 @@ export const KEY_TYPES = ['dev', 'prod', 'test'];
 export const KEY_TYPE_COLORS = {
   dev: 'text-brand-300 bg-brand-500/10 border-brand-500/20',
   prod: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20',
-  test: 'text-amber-300 bg-amber-500/10 border-amber-500/20',
+  test: 'text-amber-300 bg-amber-500/10 border border-amber-500/20',
 };

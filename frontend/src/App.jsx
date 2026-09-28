@@ -29,8 +29,7 @@ function PublicRoute({ children }) {
 }
 
 function AppShell() {
-  const { user, loading } = useAuth();
-  const isAuthPage = ['/login', '/signup', '/'].includes(window.location.pathname);
+  const { user } = useAuth();
 
   return (
     <>

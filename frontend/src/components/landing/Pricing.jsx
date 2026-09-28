@@ -16,24 +16,24 @@ const PLANS = [
   {
     key: 'pro',
     name: 'Pro',
-    price: '$5',
+    price: '$19',
     period: '/month',
     icon: Crown,
     gradient: 'from-brand-700 to-indigo-700',
     border: 'border-brand-500/40',
     badge: 'Most Popular',
     featured: true,
-    features: ['20 weighted requests/day', '4 API slots', '4 API switches/day', 'Priority API access', 'Email support', 'Usage analytics'],
+    features: ['50 weighted requests/day', '8 API slots', '5 API switches/day', 'Priority API access', 'Email support', 'Usage analytics'],
   },
   {
     key: 'premium',
     name: 'Premium',
-    price: '$10',
+    price: '$49',
     period: '/month',
     icon: Star,
     gradient: 'from-purple-700 to-pink-700',
     border: 'border-purple-500/30',
-    features: ['30 weighted requests/day', 'Unlimited API slots', 'Unlimited switches', 'All API tiers', 'Priority 24/7 support', 'Advanced analytics'],
+    features: ['200 weighted requests/day', 'Unlimited API slots', 'Unlimited switches', 'All API tiers', 'Priority 24/7 support', 'Advanced analytics'],
   },
 ];
 

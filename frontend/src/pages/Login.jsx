@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Zap, Eye, EyeOff, AlertCircle, ArrowRight } from 'lucide-react';
 import ThreeBackground from '../components/ThreeBackground';
 
 export default function Login() {
-  const { login, authAttempts } = useAuth();
+  const { login, authAttempts, authError } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
@@ -14,23 +14,51 @@ export default function Login() {
 
   const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
 
+  // BUG FIX: The previous version read `err.response?.data?.error` in the
+  // catch block, but AuthContext.login() replaced the axios error with a
+  // bare `new Error(...)`, so `err.response` was undefined and the fallback
+  // text never rendered the backend's "Invalid credentials" message — the
+  // page appeared to just refresh with no visible feedback. Now we:
+  //   1. Prefer the message that AuthContext already derived (err.message)
+  //   2. Fall back to err.response.data.error if the axios error survived
+  //   3. Always set a visible message so the user gets feedback
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
     try {
       await login(form);
       navigate('/dashboard');
     } catch (err) {
-      if (err.message?.includes('Too many login attempts')) {
+      const raw =
+        err?.response?.data?.error ||
+        err?.message ||
+        'Login failed. Please try again.';
+      const msg = String(raw);
+      const lower = msg.toLowerCase();
+
+      if (lower.includes('too many')) {
         setError('⏳ Too many login attempts. Please wait 15 minutes.');
+      } else if (lower.includes('invalid') || lower.includes('credentials')) {
+        setError('❌ Invalid email or password.');
+      } else if (lower.includes('network')) {
+        setError('🌐 Network error. Please check your connection.');
       } else {
-        setError(err.response?.data?.error || 'Login failed. Please try again.');
+        setError(msg);
       }
     } finally {
       setLoading(false);
     }
   };
+
+  // If AuthContext surfaces its own error (e.g. "Session expired"),
+  // display it too — this covers cases where login() never even ran.
+  useEffect(() => {
+    if (authError && !error) {
+      setError(authError);
+    }
+  }, [authError, error]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative">
@@ -51,30 +79,41 @@ export default function Login() {
 
         <div className="card-glass rounded-2xl p-8">
           {error && (
-            <div className={`flex items-center gap-2.5 rounded-xl px-4 py-3 mb-6 text-sm animate-fade-in ${
-              error.includes('Too many') 
-                ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
-                : 'bg-red-500/10 border border-red-500/20 text-red-400'
-            }`}>
-              <AlertCircle size={15} className="shrink-0" />{error}
+            <div
+              className={`flex items-center gap-2.5 rounded-xl px-4 py-3 mb-6 text-sm animate-fade-in ${
+                error.includes('Too many')
+                  ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+                  : error.includes('Network')
+                    ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400'
+                    : 'bg-red-500/10 border border-red-500/20 text-red-400'
+              }`}
+            >
+              <AlertCircle size={15} className="shrink-0" />
+              <span className="flex-1">{error}</span>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">Email</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">
+                Email
+              </label>
               <input
                 type="email"
                 name="email"
                 value={form.email}
                 onChange={handleChange}
                 required
+                autoComplete="email"
                 placeholder="you@example.com"
                 className="input-base"
               />
             </div>
+
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">
+                Password
+              </label>
               <div className="relative">
                 <input
                   type={showPw ? 'text' : 'password'}
@@ -82,18 +121,21 @@ export default function Login() {
                   value={form.password}
                   onChange={handleChange}
                   required
+                  autoComplete="current-password"
                   placeholder="••••••••"
                   className="input-base pr-11"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPw((v) => !v)}
+                  aria-label={showPw ? 'Hide password' : 'Show password'}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
                 >
                   {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
+
             <button
               type="submit"
               disabled={loading || authAttempts > 3}
