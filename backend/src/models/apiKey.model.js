@@ -19,7 +19,11 @@ const ApiKeyModel = {
   },
 
   /**
-   * Find all API keys for a user
+   * Find all ACTIVE API keys for a user.
+   * BUG FIX: revoking a key is a soft delete (is_active = FALSE), but this
+   * query returned every key regardless of is_active, so "deleted" keys
+   * reappeared in the list (and in the dashboard key count) after a refresh
+   * even though they had really been revoked.
    */
   findByUserId: async (userId) => {
     const result = await db.query(
@@ -27,6 +31,7 @@ const ApiKeyModel = {
               expires_at, last_used_at, is_active, created_at
        FROM api_keys
        WHERE user_id = $1
+         AND is_active = TRUE
        ORDER BY created_at DESC`,
       [userId]
     );

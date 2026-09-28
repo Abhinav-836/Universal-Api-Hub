@@ -51,9 +51,21 @@ api.interceptors.response.use(
     if (response?.status === 401) {
       const path = window.location.pathname;
       const isAuthPage = ['/login', '/signup', '/'].includes(path);
+
+      // BUG FIX: a 401 from an API-key call (the playground hitting
+      // /api/v1/* with an X-API-Key header) means "that API key is
+      // invalid/expired", NOT "your login session expired". Treating it as a
+      // session expiry cleared the token and bounced the user to /login
+      // every time they tried the playground with a bad key.
+      const reqUrl = originalRequest?.url || '';
+      const usedApiKey = !!(
+        originalRequest?.headers?.['X-API-Key'] ||
+        originalRequest?.headers?.get?.('x-api-key')
+      );
+      const isApiKeyCall = usedApiKey || reqUrl.includes('/api/v1/');
       
-      // ✅ Only clear token and redirect if not on auth pages
-      if (!isAuthPage && !originalRequest._retry) {
+      // ✅ Only clear token and redirect for real session failures
+      if (!isAuthPage && !isApiKeyCall && !originalRequest._retry) {
         localStorage.removeItem('auth_token');
         // Add small delay to avoid flash
         setTimeout(() => {

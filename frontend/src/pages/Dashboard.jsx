@@ -21,6 +21,9 @@ function MiniPlayground({ userApiKey }) {
   const [ep, setEp] = useState(ENDPOINTS[0]);
   const [body, setBody] = useState(ENDPOINTS[0].defaultBody || '');
   const [apiKey, setApiKey] = useState(userApiKey || '');
+
+  // Pick up a newly created key without requiring a page reload
+  useEffect(() => { if (userApiKey) setApiKey(userApiKey); }, [userApiKey]);
   const [response, setRes] = useState(null);
   const [loading, setLd] = useState(false);
   const [elapsed, setEl] = useState(null);
@@ -150,11 +153,17 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [upgradeModal, setUpgradeModal] = useState(false);
+  const [freshKey, setFreshKey] = useState('');  // raw key, only in memory, right after creation
   const loadCalled = useRef(false);
 
   const plan = user?.plan || 'free';
   const planCfg = PLANS[plan] || PLANS.free;
-  const userApiKey = data?.apiKeys?.[0]?.key_prefix ? data.apiKeys[0].key_prefix + '...' : '';
+  // BUG FIX: this used to prefill the playground with `key_prefix + '...'`
+  // (e.g. "uhb_rHnHAB76..."), which is NOT a usable key — the full key is only
+  // known at creation time. Sending it always returned 401 (and, combined
+  // with the interceptor, logged the user out). Now the playground is only
+  // prefilled with the real key right after it's created.
+  const userApiKey = freshKey;
 
   const load = useCallback(async () => {
     if (loadCalled.current) return;
@@ -323,7 +332,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            <ApiKeyManager apis={allApis} onToast={showToast} />
+            <ApiKeyManager apis={allApis} onToast={showToast} onKeyCreated={setFreshKey} />
             <RecentRequests requests={recentReqs} />
           </div>
         )}

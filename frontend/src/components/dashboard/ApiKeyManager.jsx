@@ -4,7 +4,7 @@ import { Key, Plus, Trash2, Copy, Check, ChevronDown, X, Eye, EyeOff } from 'luc
 import { apiKeyService } from '../../services/auth';
 import { KEY_TYPES, KEY_TYPE_COLORS } from '../../utils/constants';
 
-export default function ApiKeyManager({ apis = [], onToast }) {
+export default function ApiKeyManager({ apis = [], onToast, onKeyCreated }) {
   const [keys, setKeys]           = useState([]);
   const [loading, setLoading]     = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -53,7 +53,7 @@ export default function ApiKeyManager({ apis = [], onToast }) {
       </div>
 
       {/* New key revealed */}
-      {newKey && (
+      {typeof newKey === 'string' && newKey && (
         <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 animate-fade-in">
           <p className="text-xs text-emerald-400 font-medium mb-2">⚠ Copy now — key won't be shown again</p>
           <div className="flex items-center gap-2">
@@ -95,10 +95,6 @@ export default function ApiKeyManager({ apis = [], onToast }) {
                   {k.expires_at && <span>Exp: {new Date(k.expires_at).toLocaleDateString()}</span>}
                 </div>
               </div>
-              <button onClick={() => copyToClipboard(k.key_prefix + '...', k.id)}
-                className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-slate-400 hover:text-white hover:bg-white/10 transition-all">
-                {copied === k.id ? <Check size={13} /> : <Copy size={13} />}
-              </button>
               <button onClick={() => handleRevoke(k.id)}
                 className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all">
                 <Trash2 size={13} />
@@ -108,12 +104,18 @@ export default function ApiKeyManager({ apis = [], onToast }) {
         </div>
       )}
 
+      {keys.length > 0 && (
+        <p className="text-[10px] text-slate-600 mt-3">
+          Only the key prefix is stored — the full key is shown once, right after you create it.
+        </p>
+      )}
+
       {/* Create modal */}
       {showModal && (
         <CreateKeyModal
           apis={apis}
           onClose={() => setShowModal(false)}
-          onCreated={(rawKey) => { setNewKey(rawKey); setShowModal(false); load(); onToast?.('Key created!'); }}
+          onCreated={(rawKey) => { setNewKey(rawKey); onKeyCreated?.(rawKey); setShowModal(false); load(); onToast?.('Key created!'); }}
           onToast={onToast}
         />
       )}
@@ -143,7 +145,15 @@ function CreateKeyModal({ apis, onClose, onCreated, onToast }) {
       if (form.expiresAt) payload.expiresAt = form.expiresAt;
       if (form.scopedApis.length) payload.scopedApis = form.scopedApis;
       const data = await apiKeyService.create(payload);
-      onCreated(data.rawKey || data.key);
+      // BUG FIX: the API responds { success, key: { ...record, rawKey } }, so the
+      // raw key lives at data.key.rawKey. This used `data.rawKey || data.key`,
+      // which fell through to the whole key OBJECT; that object was then
+      // rendered as a React child ({newKey}) -> "Objects are not valid as a
+      // React child" -> the entire app unmounted (blank page) right after
+      // every successful key creation.
+      const raw = data?.key?.rawKey || data?.rawKey;
+      if (typeof raw !== 'string') throw new Error('No raw key returned');
+      onCreated(raw);
     } catch { onToast?.('Failed to create key', 'error'); }
     finally { setLoading(false); }
   };
