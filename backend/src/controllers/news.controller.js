@@ -1,13 +1,8 @@
-const { validationResult } = require('express-validator');
+// backend/src/controllers/news.controller.js
 const NewsService = require('../services/news.service');
-const { withUsageLog } = require('../utils/apiHandler');
+const { withUsageLog, markMock } = require('../utils/apiHandler');
 
 const newsHandler = withUsageLog(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ success: false, errors: errors.array() });
-  }
-
   const { q, category, country = 'us' } = req.query;
   const pageSize = parseInt(req.query.pageSize || '10', 10);
   const page = parseInt(req.query.page || '1', 10);
@@ -16,10 +11,12 @@ const newsHandler = withUsageLog(async (req, res) => {
     userId: req.user.id,
     q,
     category,
-    country,
+    country: String(country).toLowerCase(),
     pageSize,
     page,
   });
+
+  if (payload.source === 'mock') markMock(res);
   res.json({ success: true, news: payload });
 });
 

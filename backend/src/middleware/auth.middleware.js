@@ -9,8 +9,11 @@ const { JWT_SECRET } = require('../config/jwt');
 const parseCookies = (cookieHeader) => {
   if (!cookieHeader) return {};
   return cookieHeader.split(';').reduce((acc, cookie) => {
-    const [key, val] = cookie.split('=').map(c => c.trim());
-    acc[key] = val;
+    const idx = cookie.indexOf('=');
+    if (idx === -1) return acc;
+    const key = cookie.slice(0, idx).trim();
+    const val = cookie.slice(idx + 1).trim();
+    if (key) acc[key] = decodeURIComponent(val);
     return acc;
   }, {});
 };
@@ -26,11 +29,6 @@ const jwtAuth = async (req, res, next) => {
     }
 
     if (!token) {
-      logger.debug('No token found', {
-        hasCookie: !!req.headers.cookie,
-        cookies: Object.keys(cookies),
-        hasAuth: !!req.headers.authorization
-      });
       return res.status(401).json({
         success: false,
         error: 'Authentication required. Please log in.'
@@ -42,69 +40,50 @@ const jwtAuth = async (req, res, next) => {
       payload = jwt.verify(token, JWT_SECRET);
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
-        return res.status(401).json({
-          success: false,
-          error: 'Token expired. Please log in again.'
-        });
+        return res.status(401).json({ success: false, error: 'Token expired. Please log in again.' });
       }
       if (err.name === 'JsonWebTokenError') {
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid token. Please log in again.'
-        });
+        return res.status(401).json({ success: false, error: 'Invalid token. Please log in again.' });
       }
       throw err;
     }
 
     if (!payload.userId) {
-      logger.warn('Invalid token payload - missing userId', { payload });
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid token payload'
-      });
+      logger.warn('Invalid token payload - missing userId');
+      return res.status(401).json({ success: false, error: 'Invalid token payload' });
     }
 
-    // FIX: always fetch fresh user; only cache the safe subset
     let user = null;
     const redis = getRedis();
     const cacheKey = KEYS.userCache(payload.userId);
 
     try {
       const cached = await redis.get(cacheKey);
-      if (cached) {
-        user = JSON.parse(cached);
-        logger.debug('User found in cache', { userId: payload.userId });
-      }
+      if (cached) user = JSON.parse(cached);
     } catch (_) { /* ignore */ }
 
     if (!user) {
       user = await UserModel.findById(payload.userId);
       if (!user) {
         logger.warn('User not found', { userId: payload.userId });
-        return res.status(401).json({
-          success: false,
-          error: 'User not found'
-        });
+        return res.status(401).json({ success: false, error: 'User not found' });
       }
-
       try {
         await redis.set(cacheKey, JSON.stringify(user), 'EX', TTL.FIVE_MINUTES);
-        logger.debug('User cached', { userId: payload.userId });
       } catch (_) { /* ignore */ }
+    }
+
+    // FIX: suspended accounts were still able to use every JWT-protected
+    // route because is_active was never checked on this path.
+    if (user.is_active === false) {
+      return res.status(403).json({ success: false, error: 'Account suspended' });
     }
 
     req.user = user;
     next();
   } catch (err) {
-    logger.error('JWT auth error', {
-      error: err.message,
-      stack: err.stack,
-      path: req.path
-    });
-    return res.status(401).json({
-      success: false,
-      error: 'Authentication failed'
-    });
+    logger.error('JWT auth error', { error: err.message, path: req.path });
+    return res.status(401).json({ success: false, error: 'Authentication failed' });
   }
 };
 
@@ -122,29 +101,17 @@ const apiKeyAuth = async (req, res, next) => {
     }
 
     if (!rawKey.startsWith('uhb_')) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid API key format'
-      });
+      return res.status(401).json({ success: false, error: 'Invalid API key format' });
     }
 
     const keyRecord = await ApiKeyService.findByRawKey(rawKey);
     if (!keyRecord) {
-      logger.warn('Invalid API key attempt', {
-        ip: req.ip,
-        prefix: rawKey.substring(0, 12)
-      });
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid or expired API key'
-      });
+      logger.warn('Invalid API key attempt', { ip: req.ip, prefix: rawKey.substring(0, 12) });
+      return res.status(401).json({ success: false, error: 'Invalid or expired API key' });
     }
 
     if (!keyRecord.user_active) {
-      return res.status(403).json({
-        success: false,
-        error: 'Account suspended'
-      });
+      return res.status(403).json({ success: false, error: 'Account suspended' });
     }
 
     req.apiKey = keyRecord;
@@ -155,10 +122,7 @@ const apiKeyAuth = async (req, res, next) => {
     next();
   } catch (err) {
     logger.error('API key auth error', { error: err.message });
-    return res.status(500).json({
-      success: false,
-      error: 'Authentication error'
-    });
+    return res.status(500).json({ success: false, error: 'Authentication error' });
   }
 };
 

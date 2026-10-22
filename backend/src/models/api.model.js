@@ -1,6 +1,14 @@
 // backend/src/models/api.model.js
 const db = require('../config/db');
 
+const PLAN_LEVEL_SQL = `CASE a.min_plan
+                          WHEN 'free'    THEN 0
+                          WHEN 'pro'     THEN 1
+                          WHEN 'premium' THEN 2
+                        END`;
+
+const PLAN_ORDER = { free: 0, pro: 1, premium: 2 };
+
 const ApiModel = {
   findAll: async () => {
     const result = await db.query(
@@ -18,17 +26,12 @@ const ApiModel = {
   },
 
   findByPlan: async (plan) => {
-    const planOrder = { free: 0, pro: 1, premium: 2 };
-    const planLevel = planOrder[plan] ?? 0;
+    const planLevel = PLAN_ORDER[plan] ?? 0;
     const result = await db.query(
-      `SELECT * FROM apis
-       WHERE is_active = TRUE
-         AND CASE min_plan
-               WHEN 'free'    THEN 0
-               WHEN 'pro'     THEN 1
-               WHEN 'premium' THEN 2
-             END <= $1
-       ORDER BY name`,
+      `SELECT a.* FROM apis a
+       WHERE a.is_active = TRUE
+         AND ${PLAN_LEVEL_SQL} <= $1
+       ORDER BY a.name`,
       [planLevel]
     );
     return result.rows;
@@ -85,12 +88,65 @@ const ApiModel = {
     return result.rows.length > 0;
   },
 
+  userHasAccessById: async (userId, apiId) => {
+    const result = await db.query(
+      'SELECT 1 FROM user_api_access WHERE user_id = $1 AND api_id = $2',
+      [userId, apiId]
+    );
+    return result.rows.length > 0;
+  },
+
   findById: async (id) => {
     const result = await db.query(
       'SELECT * FROM apis WHERE id = $1 AND is_active = TRUE',
       [id]
     );
     return result.rows[0] || null;
+  },
+
+  /**
+   * Bring a user's API grants in line with their plan.
+   *  - premium: grant every active API.
+   *  - free/pro: remove APIs above the plan's tier, then trim to maxSlots
+   *    (keeping the oldest grants).
+   * Called on every plan change (manual or Stripe webhook) so downgrades
+   * can never keep paid-tier access.
+   */
+  syncAccessForPlan: async (userId, plan, maxSlots) => {
+    return db.withTransaction(async (client) => {
+      if (plan === 'premium') {
+        await client.query(
+          `INSERT INTO user_api_access (user_id, api_id)
+           SELECT $1, id FROM apis WHERE is_active = TRUE
+           ON CONFLICT (user_id, api_id) DO NOTHING`,
+          [userId]
+        );
+        return;
+      }
+
+      const level = PLAN_ORDER[plan] ?? 0;
+      await client.query(
+        `DELETE FROM user_api_access uaa
+         USING apis a
+         WHERE uaa.api_id = a.id
+           AND uaa.user_id = $1
+           AND ${PLAN_LEVEL_SQL} > $2`,
+        [userId, level]
+      );
+
+      if (Number.isFinite(maxSlots)) {
+        await client.query(
+          `DELETE FROM user_api_access
+           WHERE id IN (
+             SELECT id FROM user_api_access
+             WHERE user_id = $1
+             ORDER BY granted_at ASC, id ASC
+             OFFSET $2
+           )`,
+          [userId, maxSlots]
+        );
+      }
+    });
   },
 };
 

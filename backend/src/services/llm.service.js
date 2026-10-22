@@ -7,141 +7,114 @@ const getBaseUrl = () =>
 
 const getApiKey = () => process.env.OPENROUTER_API_KEY || '';
 
+const hasRealKey = (key) =>
+  !!key && !/placeholder|x{4,}/i.test(key);
+
+// Model ids change often on OpenRouter — set these in .env and check
+// https://openrouter.ai/models when a model starts returning 404.
 const getModelsForPlan = (plan = 'free') => {
   const modelsMap = {
-    free: process.env.OPENROUTER_MODEL_FREE || 'google/gemini-2.0-flash-exp:free',
+    free: process.env.OPENROUTER_MODEL_FREE || 'meta-llama/llama-3.3-70b-instruct:free',
     pro: process.env.OPENROUTER_MODEL_PRO || 'openai/gpt-4o-mini',
-    premium: process.env.OPENROUTER_MODEL_ALL || 'openai/gpt-4o,anthropic/claude-3.5-sonnet',
+    premium: process.env.OPENROUTER_MODEL_ALL || 'openai/gpt-4o',
   };
-
   const models = modelsMap[plan] || modelsMap.free;
-  return models.split(',').map(m => m.trim()).filter(Boolean);
+  return models.split(',').map((m) => m.trim()).filter(Boolean);
 };
 
-const getPrimaryModel = (plan = 'free') => {
-  const models = getModelsForPlan(plan);
-  return models.length > 0 ? models[0] : 'openai/gpt-3.5-turbo';
-};
+const getPrimaryModel = (plan = 'free') => getModelsForPlan(plan)[0];
 
-const mockReply = (message) => ({
+const mockReply = (message, plan) => ({
   source: 'mock',
   reply: `[Mock] ${message.slice(0, 160)}`,
   model: 'mock-llm-chat',
-  usage: {
-    prompt_tokens: Math.max(1, Math.round(message.length / 4)),
-    completion_tokens: 96,
-    total_tokens: Math.max(1, Math.round(message.length / 4)) + 96,
-  },
+  usage: null,
+  finishReason: 'stop',
+  plan,
+  availableModels: getModelsForPlan(plan),
 });
 
+const unavailable = () => {
+  const err = new Error('The AI provider is temporarily unavailable. Please retry shortly.');
+  err.statusCode = 503;
+  return err;
+};
+
+// 400/404 from OpenRouter usually means "this model id is gone/invalid" —
+// worth trying the next model in the plan's list.
+const isModelError = (err) => [400, 404].includes(err.response?.status);
+
+async function callOpenRouter({ model, message, system, temperature, maxTokens }) {
+  const response = await axios.post(
+    `${getBaseUrl()}/chat/completions`,
+    {
+      model,
+      temperature,
+      max_tokens: maxTokens,
+      messages: [
+        ...(system ? [{ role: 'system', content: system }] : []),
+        { role: 'user', content: message },
+      ],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${getApiKey()}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.FRONTEND_URL || 'https://universal-api-hub.vercel.app',
+        'X-Title': 'Universal API Hub',
+      },
+      timeout: 30000,
+    }
+  );
+  return response.data;
+}
+
 const LlmService = {
+  /**
+   * Returns { source: 'mock' } ONLY when no API key is configured.
+   * FIX: provider failures used to come back as "[Mock] ..." with HTTP 200
+   * and the user was charged. They now throw a 503 (and quota is refunded).
+   */
   chat: async ({ message, system, temperature = 0.4, maxTokens = 500, plan = 'free', model: requestedModel }) => {
-    const apiKey = getApiKey();
-    const baseUrl = getBaseUrl();
     const availableModels = getModelsForPlan(plan);
 
-    // FIX: allow user to pass a specific model but only if it's in their plan's allowed list
-    let model = requestedModel && availableModels.includes(requestedModel)
-      ? requestedModel
-      : getPrimaryModel(plan);
-
-    logger.debug('LLM request', { model, plan, hasApiKey: !!apiKey });
-
-    if (!apiKey || apiKey === 'sk-or-v1-placeholder_replace_with_real_key' || apiKey.includes('xxxxx')) {
+    if (!hasRealKey(getApiKey())) {
       logger.warn('No valid OpenRouter API key, using mock response');
-      return mockReply(message);
+      return mockReply(message, plan);
     }
 
-    try {
-      const response = await axios.post(
-        `${baseUrl}/chat/completions`,
-        {
-          model: model,
-          temperature,
-          max_tokens: maxTokens,
-          messages: [
-            ...(system ? [{ role: 'system', content: system }] : []),
-            { role: 'user', content: message },
-          ],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': process.env.FRONTEND_URL || 'https://universal-api-hub.com',
-            'X-Title': 'Universal API Hub',
-          },
-          timeout: 30000,
-        }
-      );
+    const ordered = requestedModel && availableModels.includes(requestedModel)
+      ? [requestedModel, ...availableModels.filter((m) => m !== requestedModel)]
+      : availableModels;
 
-      const choice = response.data.choices?.[0];
-      return {
-        source: 'openrouter',
-        reply: choice?.message?.content || '',
-        model: response.data.model || model,
-        usage: response.data.usage || null,
-        finishReason: choice?.finish_reason || 'stop',
-        availableModels,
-        plan,
-      };
-    } catch (err) {
-      logger.error('OpenRouter request failed', {
-        error: err.message,
-        model,
-        plan,
-        status: err.response?.status,
-        data: err.response?.data,
-      });
-
-      // Fallback to a known working model if the requested one 404s
-      if (err.response?.status === 404) {
-        try {
-          const fallbackModel = 'google/gemini-2.0-flash-exp:free';
-          const fallbackResponse = await axios.post(
-            `${baseUrl}/chat/completions`,
-            {
-              model: fallbackModel,
-              temperature,
-              max_tokens: maxTokens,
-              messages: [
-                ...(system ? [{ role: 'system', content: system }] : []),
-                { role: 'user', content: message },
-              ],
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': process.env.FRONTEND_URL || 'https://universal-api-hub.com',
-                'X-Title': 'Universal API Hub',
-              },
-              timeout: 30000,
-            }
-          );
-          const choice = fallbackResponse.data.choices?.[0];
-          return {
-            source: 'openrouter-fallback',
-            reply: choice?.message?.content || '',
-            model: fallbackModel,
-            usage: fallbackResponse.data.usage || null,
-            finishReason: choice?.finish_reason || 'stop',
-            availableModels: [fallbackModel],
-            plan,
-          };
-        } catch (fallbackErr) {
-          logger.error('Fallback LLM also failed', { error: fallbackErr.message });
-        }
+    for (const model of ordered) {
+      try {
+        const data = await callOpenRouter({ model, message, system, temperature, maxTokens });
+        const choice = data.choices?.[0];
+        if (!choice?.message) throw unavailable();
+        return {
+          source: 'openrouter',
+          reply: choice.message.content || '',
+          model: data.model || model,
+          usage: data.usage || null,
+          finishReason: choice.finish_reason || 'stop',
+          availableModels,
+          plan,
+        };
+      } catch (err) {
+        logger.error('OpenRouter request failed', {
+          error: err.message,
+          model,
+          plan,
+          status: err.response?.status,
+          data: err.response?.data,
+        });
+        if (isModelError(err)) continue; // try the next configured model
+        throw unavailable();
       }
-
-      return {
-        ...mockReply(message),
-        source: 'mock-fallback',
-        plan,
-        error: err.message,
-        availableModels,
-      };
     }
+
+    throw unavailable();
   },
 
   getAvailableModels: (plan = 'free') => getModelsForPlan(plan),

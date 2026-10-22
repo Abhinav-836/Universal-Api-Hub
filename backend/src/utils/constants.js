@@ -1,5 +1,11 @@
 // backend/src/utils/constants.js
 
+// FIX: the advertised model lists were hard-coded and did not match the
+// models llm.service.js actually calls (which come from .env). Both now
+// read the same env vars, so /plans shows what users really get.
+const modelsFromEnv = (name, fallback) =>
+  (process.env[name] || fallback).split(',').map((m) => m.trim()).filter(Boolean);
+
 const PLANS = {
   free: {
     name: 'Free',
@@ -9,13 +15,9 @@ const PLANS = {
     allowedTiers: ['free'],
     alphaVantageCallsPerMin: 5,
     yahooFinanceCallsPerMin: 10,
-    llmModels: [
-      'mistralai/mistral-7b-instruct',
-      'deepseek/deepseek-chat',
-      'meta-llama/llama-3-8b-instruct',
-      'google/gemini-flash-1.5',
-      'microsoft/phi-3-mini-128k-instruct'
-    ],
+    get llmModels() {
+      return modelsFromEnv('OPENROUTER_MODEL_FREE', 'meta-llama/llama-3.3-70b-instruct:free');
+    },
   },
   pro: {
     name: 'Pro',
@@ -25,38 +27,39 @@ const PLANS = {
     allowedTiers: ['free', 'pro'],
     alphaVantageCallsPerMin: 15,
     yahooFinanceCallsPerMin: 20,
-    llmModels: [
-      'openai/gpt-4o-mini',
-      'openai/gpt-4-turbo',
-      'anthropic/claude-3.5-sonnet',
-      'anthropic/claude-3-haiku',
-      'google/gemini-pro-1.5',
-      'meta-llama/llama-3-70b-instruct'
-    ],
+    get llmModels() {
+      return modelsFromEnv('OPENROUTER_MODEL_PRO', 'openai/gpt-4o-mini');
+    },
   },
   premium: {
     name: 'Premium',
     dailyLimit: 200,
-    apiSlots: 10,
+    apiSlots: 10, // not enforced: premium is auto-granted every API
     switchesPerDay: Infinity,
     allowedTiers: ['free', 'pro', 'premium'],
     alphaVantageCallsPerMin: 25,
     yahooFinanceCallsPerMin: 30,
-    llmModels: 'all',
+    get llmModels() {
+      return modelsFromEnv('OPENROUTER_MODEL_ALL', 'openai/gpt-4o');
+    },
   },
 };
 
+// FIX: these disagreed with the database (chat 2 vs 3, llm-chat 3 vs 5,
+// news/sports 1 vs 2). The DB `cost_weight` column is what is actually
+// charged (see middleware/apiAccess.js); these now mirror database/seed.sql
+// and are only a fallback.
 const API_COST_WEIGHTS = {
-  chat: 2,
-  'llm-chat': 3,
+  chat: 3,
+  'llm-chat': 5,
   'image-analyze': 5,
   weather: 1,
   translate: 2,
   sentiment: 2,
   summarize: 3,
   geocode: 1,
-  news: 1,
-  sports: 1,
+  news: 2,
+  sports: 2,
   'stock-quote': 2,
   'stock-search': 1,
   forex: 2,

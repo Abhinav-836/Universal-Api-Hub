@@ -32,7 +32,9 @@ export default function Signup() {
       await login({ email: form.email, password: form.password });
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.errors?.[0]?.msg || err.response?.data?.error || 'Registration failed.');
+      // FIX: AuthContext already turns the response into a friendly
+      // message (validation msg, "already taken", network error…).
+      setError(err.message || 'Registration failed.');
     } finally { setLoading(false); }
   };
 
@@ -70,8 +72,8 @@ export default function Signup() {
               <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
               <div className="relative">
                 <input type={showPw ? 'text' : 'password'} name="password" value={form.password} onChange={handleChange} required
-                  placeholder="Create a strong password" className="input-base pr-11" />
-                <button type="button" onClick={() => setShowPw((v) => !v)}
+                  placeholder="Create a strong password" autoComplete="new-password" className="input-base pr-11" />
+                <button type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? 'Hide password' : 'Show password'}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors">
                   {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>

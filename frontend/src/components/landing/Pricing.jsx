@@ -33,7 +33,7 @@ const PLANS = [
     icon: Star,
     gradient: 'from-purple-700 to-pink-700',
     border: 'border-purple-500/30',
-    features: ['200 weighted requests/day', '10 API slots', '10 switches', 'All API tiers', 'Priority 24/7 support', 'Advanced analytics'],
+    features: ['200 weighted requests/day', 'All APIs included', 'No switching needed', 'All API tiers', 'Priority support', 'Advanced analytics'],
   },
 ];
 

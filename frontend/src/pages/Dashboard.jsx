@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { dashboardService, planService } from '../services/auth';
 import StatsCards from '../components/dashboard/StatsCards';
@@ -7,13 +8,14 @@ import ApiKeyManager from '../components/dashboard/ApiKeyManager';
 import RecentRequests from '../components/dashboard/RecentRequests';
 import { ToastContainer, useToast } from '../components/ui/Toast';
 import { PLANS } from '../utils/constants';
-import { RefreshCw, Crown, X, Zap, Layers, Terminal } from 'lucide-react';
+import { RefreshCw, Crown, X, Layers, Terminal } from 'lucide-react';
 import api from '../services/api';
 
 // API Playground (mini, for dashboard)
 const ENDPOINTS = [
   { label: 'POST /api/v1/chat', method: 'POST', path: '/api/v1/chat', defaultBody: JSON.stringify({ message: 'Hello!' }, null, 2) },
   { label: 'GET /api/v1/weather', method: 'GET', path: '/api/v1/weather?city=London', defaultBody: null },
+  { label: 'GET /api/v1/stocks/quote', method: 'GET', path: '/api/v1/stocks/quote?symbol=AAPL', defaultBody: null },
   { label: 'POST /api/v1/sentiment', method: 'POST', path: '/api/v1/sentiment', defaultBody: JSON.stringify({ text: 'This is great!' }, null, 2) },
 ];
 
@@ -21,21 +23,35 @@ function MiniPlayground({ userApiKey }) {
   const [ep, setEp] = useState(ENDPOINTS[0]);
   const [body, setBody] = useState(ENDPOINTS[0].defaultBody || '');
   const [apiKey, setApiKey] = useState(userApiKey || '');
-
-  // Pick up a newly created key without requiring a page reload
-  useEffect(() => { if (userApiKey) setApiKey(userApiKey); }, [userApiKey]);
   const [response, setRes] = useState(null);
   const [loading, setLd] = useState(false);
   const [elapsed, setEl] = useState(null);
 
+  // Pick up a newly created key without requiring a page reload
+  useEffect(() => { if (userApiKey) setApiKey(userApiKey); }, [userApiKey]);
+
   const run = async () => {
+    if (!apiKey.trim()) {
+      setRes({ error: 'Paste an API key (uhb_...) first. Create one in the API Keys panel.' });
+      return;
+    }
+    let parsedBody = {};
+    if (ep.method === 'POST') {
+      try {
+        parsedBody = JSON.parse(body || '{}');
+      } catch {
+        setRes({ error: 'Request body is not valid JSON' });
+        return;
+      }
+    }
+
     setLd(true);
     setRes(null);
     const t0 = Date.now();
     try {
-      const headers = { 'X-API-Key': apiKey };
+      const headers = { 'X-API-Key': apiKey.trim() };
       const res = ep.method === 'POST'
-        ? await api.post(ep.path, JSON.parse(body || '{}'), { headers })
+        ? await api.post(ep.path, parsedBody, { headers })
         : await api.get(ep.path, { headers });
       setEl(Date.now() - t0);
       setRes({ data: res.data, status: res.status });
@@ -58,10 +74,12 @@ function MiniPlayground({ userApiKey }) {
       <select
         value={ep.path}
         onChange={(e) => {
-          const found = ENDPOINTS.find(x => x.path === e.target.value);
-          if (found) { setEp(found);
+          const found = ENDPOINTS.find((x) => x.path === e.target.value);
+          if (found) {
+            setEp(found);
             setBody(found.defaultBody || '');
-            setRes(null); }
+            setRes(null);
+          }
         }}
         className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 mb-3 focus:outline-none focus:border-brand-500/40"
       >
@@ -96,11 +114,17 @@ function MiniPlayground({ userApiKey }) {
         <div className="animate-fade-in">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs text-slate-500 font-mono">Response</span>
-            {response.status && <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${response.status >= 400 ? 'text-red-400 bg-red-900/30' : 'text-emerald-400 bg-emerald-900/30'}`}>{response.status}</span>}
-            {elapsed && <span className="text-[10px] text-slate-600 ml-auto font-mono">{elapsed}ms</span>}
+            {response.status && (
+              <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${response.status >= 400 ? 'text-red-400 bg-red-900/30' : 'text-emerald-400 bg-emerald-900/30'}`}>
+                {response.status}
+              </span>
+            )}
+            {elapsed != null && <span className="text-[10px] text-slate-600 ml-auto font-mono">{elapsed}ms</span>}
           </div>
           <pre className="bg-black/40 border border-white/5 rounded-xl p-3 text-[10px] font-mono text-slate-300 overflow-auto max-h-36 scrollbar-hide">
-            {JSON.stringify(response.data || response.error, null, 2)}
+            {typeof (response.data || response.error) === 'string'
+              ? response.data || response.error
+              : JSON.stringify(response.data || response.error, null, 2)}
           </pre>
         </div>
       )}
@@ -108,8 +132,7 @@ function MiniPlayground({ userApiKey }) {
   );
 }
 
-// Upgrade Modal with Direct Plan Selection
-function UpgradeModal({ plan, onClose, onUpgrade }) {
+function UpgradeModal({ plan, onClose, onUpgrade, busy }) {
   const opts = [
     { key: 'pro', label: 'Pro', price: 'Free Beta', limit: '50 req/day, 8 APIs', color: 'from-brand-600 to-indigo-600' },
     { key: 'premium', label: 'Premium', price: 'Free Beta', limit: '200 req/day, all APIs', color: 'from-purple-600 to-pink-600' },
@@ -120,7 +143,7 @@ function UpgradeModal({ plan, onClose, onUpgrade }) {
       <div className="w-full max-w-md card-glass rounded-2xl p-6 shadow-2xl animate-scale-in">
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-display font-bold text-white">Upgrade Your Plan</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
+          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-white transition-colors">
             <X size={18} />
           </button>
         </div>
@@ -134,9 +157,10 @@ function UpgradeModal({ plan, onClose, onUpgrade }) {
               </div>
               <button
                 onClick={() => onUpgrade(o.key)}
-                className={`px-4 py-2 rounded-xl bg-gradient-to-r ${o.color} text-white text-sm font-semibold hover:opacity-90 flex items-center gap-1.5`}
+                disabled={!!busy}
+                className={`px-4 py-2 rounded-xl bg-gradient-to-r ${o.color} text-white text-sm font-semibold hover:opacity-90 flex items-center gap-1.5 disabled:opacity-60`}
               >
-                <Crown size={13} /> Select Plan
+                <Crown size={13} /> {busy === o.key ? 'Working…' : 'Select Plan'}
               </button>
             </div>
           ))}
@@ -148,69 +172,65 @@ function UpgradeModal({ plan, onClose, onUpgrade }) {
 }
 
 export default function Dashboard() {
-  const { user, updateUser, forceRefresh } = useAuth(); // ✅ Added forceRefresh
+  const { user, forceRefresh } = useAuth();
   const { toasts, show: showToast, remove } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [upgradeModal, setUpgradeModal] = useState(false);
-  const [freshKey, setFreshKey] = useState('');  // raw key, only in memory, right after creation
-  const loadCalled = useRef(false);
+  const [upgradeBusy, setUpgradeBusy] = useState('');
+  const [freshKey, setFreshKey] = useState(''); // raw key, only in memory, right after creation
+  const inFlight = useRef(false);
 
   const plan = user?.plan || 'free';
   const planCfg = PLANS[plan] || PLANS.free;
-  // BUG FIX: this used to prefill the playground with `key_prefix + '...'`
-  // (e.g. "uhb_rHnHAB76..."), which is NOT a usable key — the full key is only
-  // known at creation time. Sending it always returned 401 (and, combined
-  // with the interceptor, logged the user out). Now the playground is only
-  // prefilled with the real key right after it's created.
-  const userApiKey = freshKey;
 
   const load = useCallback(async () => {
-    if (loadCalled.current) return;
-    loadCalled.current = true;
-
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLoading(true);
     try {
-      const [dash, usage] = await Promise.all([
-        dashboardService.getDashboard().catch(() => ({})),
-        dashboardService.getUsage().catch(() => ({})),
-      ]);
-      setData({ ...dash, usage });
+      const dash = await dashboardService.getDashboard();
+      setData(dash);
     } catch (err) {
       if (err.response?.status !== 401) {
         showToast('Failed to load dashboard data', 'error');
       }
     } finally {
       setLoading(false);
-      loadCalled.current = false;
+      inFlight.current = false;
     }
   }, [showToast]);
 
   useEffect(() => {
     load();
-    return () => {
-      loadCalled.current = false;
-    };
-  }, []);
+  }, [load]);
 
-  // ✅ Updated handleUpgrade - uses planService
+  // Returning from Stripe checkout
+  useEffect(() => {
+    if (searchParams.get('checkout_success')) {
+      showToast('Payment received — your plan will update in a few seconds.');
+      setTimeout(() => { forceRefresh(); load(); }, 3000);
+      setSearchParams({}, { replace: true });
+    } else if (searchParams.get('checkout_canceled')) {
+      showToast('Checkout canceled', 'warning');
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams, showToast, forceRefresh, load]);
+
   const handleUpgrade = async (targetPlan) => {
+    setUpgradeBusy(targetPlan);
     try {
       const result = await planService.selectPlan(targetPlan);
-      
+      if (result?.redirecting) return; // going to Stripe checkout
       showToast(`🎉 Upgraded to ${targetPlan} plan successfully!`);
-      
-      // ✅ Force refresh user data
-      if (forceRefresh) {
-        await forceRefresh();
-      }
-      
-      // ✅ Reload dashboard data
+      await forceRefresh();
       await load();
       setUpgradeModal(false);
     } catch (err) {
-      console.error('Upgrade failed:', err);
-      showToast('Upgrade failed. Please try again.', 'error');
+      showToast(err.response?.data?.error || 'Upgrade failed. Please try again.', 'error');
+    } finally {
+      setUpgradeBusy('');
     }
   };
 
@@ -219,8 +239,8 @@ export default function Dashboard() {
       await dashboardService.deselectApi(apiId);
       showToast('API removed');
       load();
-    } catch {
-      showToast('Failed to remove API', 'error');
+    } catch (err) {
+      showToast(err.response?.data?.error || 'Failed to remove API', 'error');
     }
   };
 
@@ -231,11 +251,16 @@ export default function Dashboard() {
     apiKeysCount: data?.apiKeys?.length || 0,
   };
 
-  const dailyData = data?.usage?.daily || data?.usageHistory || [];
-  const breakdownData = data?.usage?.apiBreakdown || data?.apiBreakdown || [];
+  const dailyData = data?.usageHistory || [];
+  const breakdownData = data?.apiBreakdown || [];
   const recentReqs = data?.recentRequests || [];
   const selectedApis = data?.selectedApis || [];
   const allApis = data?.apis || [];
+
+  // FIX: the skeleton used to replace the whole page on EVERY reload
+  // (refresh, remove API, upgrade), unmounting the API-keys panel and
+  // wiping a freshly created key before the user could copy it.
+  const showSkeleton = loading && !data;
 
   return (
     <div className="min-h-screen bg-surface-950 relative z-10">
@@ -247,23 +272,22 @@ export default function Dashboard() {
             <h1 className="font-display text-2xl font-extrabold text-white mb-1">Dashboard</h1>
             <p className="text-slate-400 text-sm">
               Welcome back, <span className="text-white font-medium">{user?.username}</span> ·{' '}
-              <span className={`font-semibold ${planCfg.badge?.replace('bg-', 'text-').replace('-700', '-300') || 'text-brand-300'}`}>
-                {planCfg.name} plan
-              </span>
+              <span className="font-semibold text-brand-300">{planCfg.name} plan</span>
             </p>
           </div>
           <div className="flex items-center gap-3">
             {plan !== 'premium' && (
               <button
                 onClick={() => setUpgradeModal(true)}
-                className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-purple-600 text-white text-sm font-semibold hover:opacity-90 transition-all"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-purple-600 text-white text-sm font-semibold hover:opacity-90 transition-all"
               >
-                <Crown size={14} /> Upgrade
+                <Crown size={14} /> <span className="hidden sm:inline">Upgrade</span>
               </button>
             )}
             <button
               onClick={load}
               disabled={loading}
+              aria-label="Refresh"
               className="p-2 rounded-xl border border-white/10 hover:bg-white/5 text-slate-400 transition-all"
             >
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
@@ -271,7 +295,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {loading ? (
+        {showSkeleton ? (
           <div className="space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[...Array(4)].map((_, i) => <div key={i} className="h-32 bg-white/3 rounded-2xl animate-pulse" />)}
@@ -306,7 +330,7 @@ export default function Dashboard() {
                   <p className="text-slate-600 text-xs text-center py-12">No breakdown data yet</p>
                 )}
               </div>
-              <MiniPlayground userApiKey={userApiKey} />
+              <MiniPlayground userApiKey={freshKey} />
             </div>
 
             {selectedApis.length > 0 && (
@@ -320,12 +344,15 @@ export default function Dashboard() {
                   {selectedApis.map((a) => (
                     <div key={a.id} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-slate-300">
                       {a.name}
-                      <button
-                        onClick={() => handleDeselect(a.id)}
-                        className="text-slate-600 hover:text-red-400 transition-colors ml-1"
-                      >
-                        <X size={11} />
-                      </button>
+                      {plan !== 'premium' && (
+                        <button
+                          onClick={() => handleDeselect(a.id)}
+                          aria-label={`Remove ${a.name}`}
+                          className="text-slate-600 hover:text-red-400 transition-colors ml-1"
+                        >
+                          <X size={11} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -339,7 +366,12 @@ export default function Dashboard() {
       </div>
 
       {upgradeModal && (
-        <UpgradeModal plan={plan} onClose={() => setUpgradeModal(false)} onUpgrade={handleUpgrade} />
+        <UpgradeModal
+          plan={plan}
+          busy={upgradeBusy}
+          onClose={() => setUpgradeModal(false)}
+          onUpgrade={handleUpgrade}
+        />
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+// backend/src/services/news.service.js
 const axios = require('axios');
 const { getRedis, KEYS, TTL } = require('../config/redis');
 const { sha256 } = require('../utils/hash');
@@ -22,106 +23,43 @@ async function checkUserMinuteLimit(userId) {
 const buildCacheKey = (payload) => KEYS.newsCache(sha256(JSON.stringify(payload)));
 
 const normalizeArticles = (articles = []) =>
-  articles.slice(0, 25).map((article, index) => ({
-    id: article.url || `${article.source?.name || 'news'}-${index}`,
-    title: article.title,
-    description: article.description,
-    source: article.source?.name || 'Unknown',
-    author: article.author || null,
-    url: article.url,
-    imageUrl: article.urlToImage || null,
-    publishedAt: article.publishedAt,
-  }));
+  articles
+    .filter((a) => a.title && a.title !== '[Removed]')
+    .slice(0, 25)
+    .map((article, index) => ({
+      id: article.url || `${article.source?.name || 'news'}-${index}`,
+      title: article.title,
+      description: article.description,
+      source: article.source?.name || 'Unknown',
+      author: article.author || null,
+      url: article.url,
+      imageUrl: article.urlToImage || null,
+      publishedAt: article.publishedAt,
+    }));
 
-// FIX: generate a full page of mock news so pageSize is respected
+// Only used when NEWS_API_KEY is not configured (demo mode).
 const mockNews = ({ q, category, country, pageSize }) => {
   const now = Date.now();
   const base = [
-    {
-      title: 'Universal API Hub adds modular News API support',
-      description: 'The new module supports cached headlines, scoped access, and weighted rate limits.',
-      source: 'Universal API Hub Labs',
-      author: 'Platform Team',
-      url: 'https://example.com/news/1',
-    },
-    {
-      title: `Top ${category || 'general'} stories${q ? ` for "${q}"` : ''}`,
-      description: 'Mock headlines are returned when no upstream news provider is configured.',
-      source: 'Mock Wire',
-      author: null,
-      url: 'https://example.com/news/2',
-    },
-    {
-      title: 'Global markets rally on strong earnings reports',
-      description: 'Tech and energy sectors lead gains as investors eye Fed decision.',
-      source: 'Mock Finance',
-      author: 'Jane Doe',
-      url: 'https://example.com/news/3',
-    },
-    {
-      title: 'Breakthrough in renewable energy storage announced',
-      description: 'New battery chemistry promises 10x capacity at half the cost.',
-      source: 'Mock Science',
-      author: 'Dr. Smith',
-      url: 'https://example.com/news/4',
-    },
-    {
-      title: 'Championship finals draw record viewership',
-      description: 'Millions tune in as underdogs advance past favorites.',
-      source: 'Mock Sports',
-      author: null,
-      url: 'https://example.com/news/5',
-    },
-    {
-      title: 'New AI model sets benchmark records',
-      description: 'Open-source release outperforms proprietary alternatives on key tasks.',
-      source: 'Mock Tech',
-      author: 'Alex Lee',
-      url: 'https://example.com/news/6',
-    },
-    {
-      title: 'Health officials announce new guidelines',
-      description: 'Updated recommendations focus on preventative care and screening.',
-      source: 'Mock Health',
-      author: null,
-      url: 'https://example.com/news/7',
-    },
-    {
-      title: 'Space mission returns first images',
-      description: 'Data reveals unexpected atmospheric composition on distant moon.',
-      source: 'Mock Space',
-      author: 'Dr. Patel',
-      url: 'https://example.com/news/8',
-    },
-    {
-      title: 'Entertainment industry embraces streaming-first releases',
-      description: 'Studios shift strategy as theaters see declining attendance.',
-      source: 'Mock Entertainment',
-      author: null,
-      url: 'https://example.com/news/9',
-    },
-    {
-      title: 'Startup funding rebounds in Q3',
-      description: 'Investors return to early-stage bets after cautious first half.',
-      source: 'Mock Business',
-      author: 'Chris Kim',
-      url: 'https://example.com/news/10',
-    },
+    ['Universal API Hub adds modular News API support', 'The new module supports cached headlines, scoped access, and weighted rate limits.', 'Universal API Hub Labs'],
+    [`Top ${category || 'general'} stories${q ? ` for "${q}"` : ''}`, 'Mock headlines are returned when no upstream news provider is configured.', 'Mock Wire'],
+    ['Global markets rally on strong earnings reports', 'Tech and energy sectors lead gains.', 'Mock Finance'],
+    ['Breakthrough in renewable energy storage announced', 'New battery chemistry promises higher capacity.', 'Mock Science'],
+    ['Championship finals draw record viewership', 'Underdogs advance past favorites.', 'Mock Sports'],
   ];
-
-  const articles = base.slice(0, Math.max(1, pageSize || 10)).map((a, i) => ({
+  const articles = base.slice(0, Math.max(1, pageSize || 5)).map(([title, description, source], i) => ({
     id: `mock-news-${i + 1}`,
-    title: a.title,
-    description: a.description,
-    source: a.source,
-    author: a.author,
-    url: a.url,
+    title,
+    description,
+    source,
+    author: null,
+    url: `https://example.com/news/${i + 1}`,
     imageUrl: null,
     publishedAt: new Date(now - i * 3600000).toISOString(),
   }));
-
   return {
     source: 'mock',
+    notice: 'Demo data — no news provider is configured.',
     query: { q: q || null, category: category || 'general', country, pageSize },
     totalResults: articles.length,
     articles,
@@ -131,12 +69,17 @@ const mockNews = ({ q, category, country, pageSize }) => {
 const NewsService = {
   fetchHeadlines: async ({ userId, q, category, country = 'us', pageSize = 10, page = 1 }) => {
     if (!(await checkUserMinuteLimit(userId))) {
-      const error = new Error('NewsAPI per‑minute limit exceeded. Please wait.');
+      const error = new Error('News API per-minute limit exceeded. Please wait.');
       error.statusCode = 429;
       throw error;
     }
 
     const cachePayload = { q, category, country, pageSize, page };
+
+    if (!process.env.NEWS_API_KEY) {
+      return mockNews(cachePayload);
+    }
+
     const cacheKey = buildCacheKey(cachePayload);
     const redis = getRedis();
 
@@ -148,38 +91,38 @@ const NewsService = {
     }
 
     let payload;
-    if (process.env.NEWS_API_KEY) {
-      try {
-        const response = await axios.get(`${DEFAULT_NEWS_BASE_URL}/top-headlines`, {
-          params: {
-            q: q || undefined,
-            category: category || undefined,
-            country: country || undefined,
-            pageSize,
-            page,
-          },
-          headers: {
-            'X-Api-Key': process.env.NEWS_API_KEY,
-          },
-          timeout: 8000,
-        });
+    try {
+      const response = await axios.get(`${DEFAULT_NEWS_BASE_URL}/top-headlines`, {
+        params: {
+          q: q || undefined,
+          category: category || undefined,
+          country: country || undefined,
+          pageSize,
+          page,
+        },
+        headers: { 'X-Api-Key': process.env.NEWS_API_KEY },
+        timeout: 8000,
+      });
 
-        payload = {
-          source: 'newsapi',
-          query: cachePayload,
-          totalResults: response.data.totalResults || 0,
-          articles: normalizeArticles(response.data.articles || []),
-        };
-
-        if (payload.articles.length === 0) {
-          payload = mockNews(cachePayload);
-        }
-      } catch (err) {
-        logger.error('News upstream request failed, falling back to mock', { error: err.message });
-        payload = mockNews(cachePayload);
-      }
-    } else {
-      payload = mockNews(cachePayload);
+      // FIX: zero results used to be replaced with fake headlines. An empty
+      // list is a valid answer.
+      payload = {
+        source: 'newsapi',
+        query: cachePayload,
+        totalResults: response.data.totalResults || 0,
+        articles: normalizeArticles(response.data.articles || []),
+      };
+    } catch (err) {
+      // FIX: upstream failures used to silently return mock headlines with
+      // success:true. Now it's a 503 (quota refunded) and nothing is cached.
+      logger.error('News upstream request failed', {
+        error: err.message,
+        status: err.response?.status,
+        code: err.response?.data?.code,
+      });
+      const error = new Error('News provider is temporarily unavailable. Please retry shortly.');
+      error.statusCode = 503;
+      throw error;
     }
 
     try {

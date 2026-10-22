@@ -14,7 +14,6 @@ export const PLANS = {
     features: ['10 weighted requests/day', '2 API slots', '2 API switches/day', 'Standard support'],
     alphaVantageCallsPerMin: 5,
     yahooFinanceCallsPerMin: 10,
-    llmModels: ['mistralai/mistral-7b-instruct', 'deepseek/deepseek-chat'],
   },
   pro: {
     name: 'Pro',
@@ -29,22 +28,20 @@ export const PLANS = {
     features: ['50 weighted requests/day', '8 API slots', '5 API switches/day', 'Priority API access', 'Email support'],
     alphaVantageCallsPerMin: 15,
     yahooFinanceCallsPerMin: 20,
-    llmModels: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet'],
   },
   premium: {
     name: 'Premium',
     price: '$49',
     dailyLimit: 200,
-    apiSlots: 10,
+    apiSlots: Infinity, // premium is auto-granted every API (backend: syncAccessForPlan)
     switchesPerDay: Infinity,
     badge: 'bg-purple-700 text-purple-200',
     badgeColor: 'bg-purple-700',
     color: 'from-fuchsia-600/20 to-pink-600/10',
     border: 'border-purple-500/30',
-    features: ['200 weighted requests/day', 'Unlimited API slots', 'Unlimited switches', 'All API tiers', 'Priority 24/7 support', 'SLA guarantee'],
+    features: ['200 weighted requests/day', 'All APIs included', 'No switching needed', 'All API tiers', 'Priority support'],
     alphaVantageCallsPerMin: 25,
     yahooFinanceCallsPerMin: 30,
-    llmModels: 'all',
   },
 };
 

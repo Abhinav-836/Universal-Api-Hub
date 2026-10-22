@@ -7,7 +7,7 @@ import { PLANS, groupApisByCategory } from '../utils/constants';
 import { Search, Crown, RefreshCw, Globe, X } from 'lucide-react';
 
 // Upgrade modal
-function UpgradeModal({ plan, onClose, onUpgrade }) {
+function UpgradeModal({ plan, onClose, onUpgrade, busy }) {
   const opts = [
     { key: 'pro',     label: 'Pro',     price: 'Free Beta', limit: '50 req/day, 8 APIs', color: 'from-brand-600 to-indigo-600' },
     { key: 'premium', label: 'Premium', price: 'Free Beta', limit: '200 req/day, all APIs', color: 'from-purple-600 to-pink-600' },
@@ -28,9 +28,9 @@ function UpgradeModal({ plan, onClose, onUpgrade }) {
                 <p className="font-bold text-white">{o.label}</p>
                 <p className="text-xs text-slate-400">{o.price} · {o.limit}</p>
               </div>
-              <button onClick={() => onUpgrade(o.key)}
-                className={`px-4 py-2 rounded-xl bg-gradient-to-r ${o.color} text-white text-sm font-semibold hover:opacity-90 flex items-center gap-1.5`}>
-                <Crown size={13} /> Select Plan
+              <button onClick={() => onUpgrade(o.key)} disabled={!!busy}
+                className={`px-4 py-2 rounded-xl bg-gradient-to-r ${o.color} text-white text-sm font-semibold hover:opacity-90 flex items-center gap-1.5 disabled:opacity-60`}>
+                <Crown size={13} /> {busy === o.key ? 'Working…' : 'Select Plan'}
               </button>
             </div>
           ))}
@@ -42,7 +42,7 @@ function UpgradeModal({ plan, onClose, onUpgrade }) {
 }
 
 export default function ApiSelection() {
-  const { user, updateUser, forceRefresh } = useAuth();
+  const { user, forceRefresh } = useAuth();
   const { toasts, show: showToast, remove } = useToast();
   const [apis, setApis] = useState([]);
   const [planCfgRemote, setPlanCfg] = useState(null);
@@ -51,6 +51,7 @@ export default function ApiSelection() {
   const [filter, setFilter] = useState('all');
   const [busy, setBusy] = useState('');
   const [upgradeModal, setUpgradeModal] = useState(false);
+  const [upgradeBusy, setUpgradeBusy] = useState('');
   
   // ✅ Use refs to prevent infinite loops
   const loadCalled = useRef(false);
@@ -59,7 +60,9 @@ export default function ApiSelection() {
   const plan = user?.plan || 'free';
   const planCfg = PLANS[plan] || PLANS.free;
   const selectedCount = apis.filter((a) => a.selected).length;
-  const slotLabel = planCfg.apiSlots === Infinity ? '∞' : planCfg.apiSlots;
+  // FIX: premium is auto-granted every API, so "14 / 10" used to show here.
+  const isPremium = plan === 'premium';
+  const slotLabel = isPremium ? 'All' : planCfg.apiSlots;
 
   // ✅ Stable load function with ref guard
   const load = useCallback(async () => {
@@ -125,22 +128,19 @@ export default function ApiSelection() {
   };
 
   const handleUpgrade = async (targetPlan) => {
+    setUpgradeBusy(targetPlan);
     try {
       const result = await planService.selectPlan(targetPlan);
+      if (result?.redirecting) return; // going to Stripe checkout
       showToast(`🎉 Upgraded to ${targetPlan} plan successfully!`);
-      
-      // ✅ Refresh user data
-      if (forceRefresh) {
-        await forceRefresh();
-      }
-      
-      // ✅ Reload APIs
+      await forceRefresh();
       loadCalled.current = false;
       await load();
       setUpgradeModal(false);
     } catch (err) {
-      console.error('Upgrade failed:', err);
-      showToast('Upgrade failed. Please try again.', 'error');
+      showToast(err.response?.data?.error || 'Upgrade failed. Please try again.', 'error');
+    } finally {
+      setUpgradeBusy('');
     }
   };
 
@@ -188,7 +188,7 @@ export default function ApiSelection() {
               <div>
                 <p className="text-xs text-slate-400 mb-0.5">API Slots Used</p>
                 <p className="font-display font-bold text-white">
-                  {selectedCount} / <span className="text-brand-400">{slotLabel}</span>
+                  {isPremium ? selectedCount : <>{selectedCount} / </>}<span className="text-brand-400">{isPremium ? ' (all APIs)' : slotLabel}</span>
                 </p>
               </div>
               {plan !== 'premium' && (
@@ -208,7 +208,7 @@ export default function ApiSelection() {
               </button>
             )}
           </div>
-          {planCfg.apiSlots !== Infinity && (
+          {!isPremium && (
             <div className="mt-4 h-1.5 rounded-full bg-white/5 overflow-hidden">
               <div className="h-full rounded-full bg-brand-500 transition-all"
                 style={{ width: `${Math.min((selectedCount / planCfg.apiSlots) * 100, 100)}%` }} />
@@ -269,7 +269,7 @@ export default function ApiSelection() {
                       selected={a.selected} accessible={a.accessible} locked={a.locked}
                       loading={busy === a.id}
                       onSelect={handleSelect} onDeselect={handleDeselect}
-                      selectedCount={selectedCount} maxSlots={planCfg.apiSlots} />
+                      selectedCount={selectedCount} maxSlots={isPremium ? Infinity : planCfg.apiSlots} />
                   ))}
                 </div>
               </section>
@@ -279,7 +279,7 @@ export default function ApiSelection() {
       </div>
 
       {upgradeModal && (
-        <UpgradeModal plan={plan} onClose={() => setUpgradeModal(false)} onUpgrade={handleUpgrade} />
+        <UpgradeModal plan={plan} busy={upgradeBusy} onClose={() => setUpgradeModal(false)} onUpgrade={handleUpgrade} />
       )}
     </div>
   );

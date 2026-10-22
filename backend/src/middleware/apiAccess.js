@@ -3,12 +3,14 @@ const ApiModel = require('../models/api.model');
 const { getRedis, KEYS, TTL } = require('../config/redis');
 const logger = require('../utils/logger');
 
+const PLAN_ORDER = { free: 0, pro: 1, premium: 2 };
+
 const apiAccessCheck = (slug) => async (req, res, next) => {
   try {
     req.apiSlug = slug;
 
     const userId = req.user?.id;
-    const plan   = req.user?.plan;
+    const plan   = req.user?.plan || 'free';
 
     const api = await ApiModel.findBySlug(slug);
     if (!api) {
@@ -17,11 +19,13 @@ const apiAccessCheck = (slug) => async (req, res, next) => {
 
     req.apiId     = api.id;
     req.apiRecord = api;
-    // FIX: prefer cost_weight column, fall back to 1
     req.apiCost   = api.cost_weight ?? api.cost ?? 1;
 
-    if (req.apiKey?.scoped_apis?.length) {
-      if (!req.apiKey.scoped_apis.includes(slug)) {
+    // Key scoping. Accept both slugs (documented format) and API ids
+    // (what older versions of the dashboard stored) so existing keys work.
+    const scoped = req.apiKey?.scoped_apis;
+    if (Array.isArray(scoped) && scoped.length) {
+      if (!scoped.includes(slug) && !scoped.includes(api.id)) {
         return res.status(403).json({
           success: false,
           error: `This API key is not scoped for "${api.name}"`,
@@ -29,22 +33,30 @@ const apiAccessCheck = (slug) => async (req, res, next) => {
       }
     }
 
+    // Always enforce the API's minimum tier against the CURRENT plan, so a
+    // stale grant left over from a higher plan can never be used.
+    if ((PLAN_ORDER[api.min_plan] ?? 0) > (PLAN_ORDER[plan] ?? 0)) {
+      return res.status(403).json({
+        success: false,
+        error: `The "${api.name}" API requires the ${api.min_plan} plan.`,
+        upgradeRequired: true,
+      });
+    }
+
     if (plan === 'premium') return next();
 
-    const redis   = getRedis();
+    const redis    = getRedis();
     const cacheKey = KEYS.userApisCache(userId);
 
     let userApiSlugs;
     try {
       const cached = await redis.get(cacheKey);
-      if (cached) {
-        userApiSlugs = JSON.parse(cached);
-      }
+      if (cached) userApiSlugs = JSON.parse(cached);
     } catch (_) { /* ignore */ }
 
     if (!userApiSlugs) {
-      const userApis  = await ApiModel.findUserApis(userId);
-      userApiSlugs = userApis.map(a => a.slug);
+      const userApis = await ApiModel.findUserApis(userId);
+      userApiSlugs = userApis.map((a) => a.slug);
       try {
         await redis.set(cacheKey, JSON.stringify(userApiSlugs), 'EX', TTL.FIVE_MINUTES);
       } catch (_) { /* ignore */ }

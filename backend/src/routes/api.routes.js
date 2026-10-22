@@ -1,3 +1,4 @@
+// backend/src/routes/api.routes.js
 const express = require('express');
 const { body, query, validationResult } = require('express-validator');
 const { apiKeyAuth } = require('../middleware/auth.middleware');
@@ -32,11 +33,14 @@ const checkValidation = (req, res, next) => {
   next();
 };
 
+// FIX: checkValidation used to run AFTER userRateLimit, so malformed
+// requests still burned daily quota. Order is now:
+// authenticate → check access → validate → charge quota → handle.
 const pipe = (slug, handler) => [
   apiKeyAuth,
   apiAccessCheck(slug),
-  userRateLimit,
   checkValidation,
+  userRateLimit,
   handler,
 ];
 
@@ -50,14 +54,14 @@ router.post('/v1/image/analyze', [
     require_tld: true,
     require_protocol: true,
     protocols: ['http', 'https'],
-    host_blacklist: ['localhost', '127.0.0.1', '169.254.169.254', '0.0.0.0', '[::1]']
+    host_blacklist: ['localhost', '127.0.0.1', '169.254.169.254', '0.0.0.0', '[::1]'],
   }).withMessage('Invalid or restricted URL'),
   body('imageBase64').optional().isString().isLength({ max: 5000000 }),
   body('features').optional().isArray(),
 ], ...pipe('image-analyze', imageAnalyzeHandler));
 
 router.get('/v1/weather', [
-  query('city').optional().isString().trim().isLength({ max: 100 }),
+  query('city').optional().isString().trim().isLength({ min: 1, max: 100 }),
   query('lat').optional().isFloat({ min: -90, max: 90 }),
   query('lon').optional().isFloat({ min: -180, max: 180 }),
   query('units').optional().isIn(['metric', 'imperial']),
@@ -74,13 +78,14 @@ router.post('/v1/sentiment', [
 ], ...pipe('sentiment', sentimentHandler));
 
 router.post('/v1/summarize', [
-  body('text').isString().trim().notEmpty().isLength({ min: 100, max: 20000 }),
+  body('text').isString().trim().notEmpty().isLength({ min: 100, max: 20000 })
+    .withMessage('Text must be 100–20000 characters'),
   body('maxLength').optional().isInt({ min: 50, max: 1000 }),
   body('style').optional().isIn(['paragraph', 'bullets']),
 ], ...pipe('summarize', summarizeHandler));
 
 router.get('/v1/geocode', [
-  query('address').optional().isString().trim().isLength({ max: 200 }),
+  query('address').optional().isString().trim().isLength({ min: 1, max: 200 }),
   query('lat').optional().isFloat({ min: -90, max: 90 }),
   query('lon').optional().isFloat({ min: -180, max: 180 }),
 ], ...pipe('geocode', geocodeHandler));
@@ -105,10 +110,12 @@ router.post('/v1/llm/chat', [
   body('system').optional().isString().isLength({ max: 1000 }),
   body('temperature').optional().isFloat({ min: 0, max: 2 }),
   body('maxTokens').optional().isInt({ min: 1, max: 1000 }),
+  body('model').optional().isString().isLength({ max: 120 }),
 ], ...pipe('llm-chat', llmChatHandler));
 
 router.get('/v1/stocks/quote', [
-  query('symbol').isString().trim().notEmpty().isLength({ min: 1, max: 10 }),
+  query('symbol').isString().trim().notEmpty().isLength({ min: 1, max: 15 })
+    .matches(/^[A-Za-z0-9.^=-]+$/).withMessage('Invalid symbol'),
 ], ...pipe('stock-quote', stockQuoteHandler));
 
 router.get('/v1/stocks/search', [
@@ -116,13 +123,13 @@ router.get('/v1/stocks/search', [
 ], ...pipe('stock-search', searchSymbolHandler));
 
 router.get('/v1/forex', [
-  query('from').isString().trim().notEmpty().isLength({ min: 1, max: 5 }),
-  query('to').isString().trim().notEmpty().isLength({ min: 1, max: 5 }),
+  query('from').isString().trim().isLength({ min: 3, max: 3 }).isAlpha().withMessage('Use a 3-letter currency code'),
+  query('to').isString().trim().isLength({ min: 3, max: 3 }).isAlpha().withMessage('Use a 3-letter currency code'),
 ], ...pipe('forex', forexHandler));
 
 router.get('/v1/crypto', [
-  query('symbol').isString().trim().notEmpty().isLength({ min: 1, max: 10 }),
-  query('market').optional().isString().trim().isLength({ min: 1, max: 5 }),
+  query('symbol').isString().trim().notEmpty().isLength({ min: 1, max: 10 }).isAlphanumeric(),
+  query('market').optional().isString().trim().isLength({ min: 3, max: 5 }).isAlpha(),
 ], ...pipe('crypto', cryptoHandler));
 
 module.exports = router;

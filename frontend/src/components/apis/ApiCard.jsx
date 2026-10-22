@@ -1,11 +1,12 @@
 import React from 'react';
-import { Lock, Zap, MessageSquare, Image, Cloud, Languages, BarChart2, AlignLeft, ScanText, MapPin, Newspaper, Trophy, Bot } from 'lucide-react';
+import { Lock, Zap, MessageSquare, Image, Cloud, Languages, BarChart2, AlignLeft, ScanText, MapPin, Newspaper, Trophy, Bot, LineChart, Search, ArrowLeftRight, Bitcoin } from 'lucide-react';
 import { API_COST_LABELS, getApiCategoryMeta, getApiCost } from '../../utils/constants';
 
 const ICONS = {
   chat: MessageSquare, 'llm-chat': Bot, weather: Cloud, 'image-analyze': Image,
   translate: Languages, sentiment: BarChart2, summarize: AlignLeft, ocr: ScanText,
   geocode: MapPin, news: Newspaper, sports: Trophy,
+  'stock-quote': LineChart, 'stock-search': Search, forex: ArrowLeftRight, crypto: Bitcoin,
 };
 
 const MIN_PLAN_COLORS = { free: 'text-emerald-400', pro: 'text-brand-400', premium: 'text-purple-400' };
@@ -63,7 +64,11 @@ export default function ApiCard({ api, selected, accessible, locked, onSelect, o
       <p className="text-xs text-slate-500 leading-relaxed mb-4 min-h-[40px]">{api.description}</p>
 
       {!locked && (
-        selected ? (
+        !Number.isFinite(maxSlots) ? (
+          <div className="w-full py-2 rounded-xl text-xs font-semibold text-center text-brand-300 bg-brand-500/10 border border-brand-500/20">
+            Included in your plan
+          </div>
+        ) : selected ? (
           <button onClick={() => onDeselect(api.id)} disabled={loading}
             className="w-full py-2 rounded-xl text-xs font-semibold border border-brand-500/30 text-brand-300 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-all disabled:opacity-50">
             {loading ? 'Removing…' : 'Remove Access'}

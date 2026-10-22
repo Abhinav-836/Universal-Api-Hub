@@ -4,7 +4,9 @@ const ApiKeyService = require('../services/apiKey.service');
 const LlmService = require('../services/llm.service');
 const { getRedis } = require('../config/redis');
 const axios = require('axios');
-const { withUsageLog } = require('../utils/apiHandler');
+const { withUsageLog, markMock } = require('../utils/apiHandler');
+
+const DEMO_NOTICE = 'Demo response — this API does not have a live provider yet. No quota was charged.';
 
 // ============================================================
 // API KEY MANAGEMENT CONTROLLER
@@ -15,7 +17,7 @@ const ApiKeyController = {
       const keys = await ApiKeyService.listForUser(req.user.id);
       res.json({ success: true, keys });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'Failed to load keys' });
     }
   },
 
@@ -39,7 +41,8 @@ const ApiKeyController = {
         key,
       });
     } catch (err) {
-      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+      const code = err.statusCode || 500;
+      res.status(code).json({ success: false, error: code < 500 ? err.message : 'Failed to create key' });
     }
   },
 
@@ -48,7 +51,8 @@ const ApiKeyController = {
       await ApiKeyService.revoke(req.params.keyId, req.user.id);
       res.json({ success: true, message: 'API key revoked' });
     } catch (err) {
-      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+      const code = err.statusCode || 500;
+      res.status(code).json({ success: false, error: code < 500 ? err.message : 'Failed to revoke key' });
     }
   },
 
@@ -60,9 +64,12 @@ const ApiKeyController = {
     try {
       const { scopedApis } = req.body;
       const updated = await ApiKeyService.updateScopes(req.params.keyId, req.user.id, scopedApis);
-      res.json({ success: true, key: updated });
+      const safe = { ...updated };
+      delete safe.key_hash;
+      res.json({ success: true, key: safe });
     } catch (err) {
-      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+      const code = err.statusCode || 500;
+      res.status(code).json({ success: false, error: code < 500 ? err.message : 'Failed to update scopes' });
     }
   },
 };
@@ -86,21 +93,20 @@ async function checkWeatherMinuteLimit(userId) {
 }
 
 // ============================================================
-// chatHandler — FIX: now passes plan so Pro/Premium get better models
+// chatHandler
 // ============================================================
 const chatHandler = withUsageLog(async (req, res) => {
   const { message, system } = req.body;
-  if (!message?.trim()) {
-    return res.status(400).json({ success: false, error: '`message` field is required' });
-  }
 
   const result = await LlmService.chat({
     message,
     system,
     temperature: 0.7,
     maxTokens: 500,
-    plan: req.user?.plan || 'free',   // ← FIX: pass plan
+    plan: req.user?.plan || 'free',
   });
+
+  if (result.source === 'mock') markMock(res);
 
   res.json({
     success: true,
@@ -109,6 +115,7 @@ const chatHandler = withUsageLog(async (req, res) => {
     usage: result.usage,
     finishReason: result.finishReason,
     source: result.source,
+    ...(result.source === 'mock' && { notice: DEMO_NOTICE }),
   });
 });
 
@@ -125,23 +132,38 @@ const weatherHandler = withUsageLog(async (req, res) => {
   if (!(await checkWeatherMinuteLimit(req.user.id))) {
     return res.status(429).json({
       success: false,
-      error: 'Weather API per‑minute limit exceeded. Please wait.',
+      error: 'Weather API per-minute limit exceeded. Please wait.',
     });
   }
 
+  // FIX: with a key configured, upstream errors used to fall through to a
+  // hard-coded "London" reading returned as success:true — even for a
+  // misspelled city. Now: 404 for unknown places, 503 for outages.
   if (process.env.WEATHER_API_KEY) {
     try {
-      const location = city ? `q=${encodeURIComponent(city)}` : `lat=${lat}&lon=${lon}`;
-      const resp = await axios.get(
-        `https://api.openweathermap.org/data/2.5/weather?${location}&units=${units}&appid=${process.env.WEATHER_API_KEY}`,
-        { timeout: 8000 }
-      );
+      const params = { units, appid: process.env.WEATHER_API_KEY };
+      if (city) params.q = city;
+      else { params.lat = lat; params.lon = lon; }
+
+      const resp = await axios.get('https://api.openweathermap.org/data/2.5/weather', {
+        params,
+        timeout: 8000,
+      });
       return res.json({ success: true, weather: resp.data, source: 'openweathermap' });
     } catch (err) {
-      // fall through to mock on upstream failure
+      if (err.response?.status === 404) {
+        const e = new Error(`Location "${city || `${lat},${lon}`}" not found`);
+        e.statusCode = 404;
+        throw e;
+      }
+      const e = new Error('Weather provider is temporarily unavailable. Please retry shortly.');
+      e.statusCode = 503;
+      throw e;
     }
   }
 
+  // Demo mode (no WEATHER_API_KEY)
+  markMock(res);
   const unitLabel = units === 'imperial' ? '°F' : '°C';
   const mockTemps = { metric: { cur: 18, feels: 16, min: 13, max: 22 }, imperial: { cur: 64, feels: 61, min: 55, max: 72 } };
   const t = mockTemps[units] || mockTemps.metric;
@@ -149,133 +171,110 @@ const weatherHandler = withUsageLog(async (req, res) => {
   res.json({
     success: true,
     source: 'mock',
+    notice: DEMO_NOTICE,
     weather: {
       location: city || `${lat}, ${lon}`,
-      country: 'GB',
       temperature: { current: t.cur, feels_like: t.feels, min: t.min, max: t.max, unit: unitLabel },
-      description: 'Partly cloudy with light south-westerly breeze',
+      description: 'Partly cloudy',
       humidity: 72,
       pressure: 1013,
-      visibility: 10000,
-      wind: { speed: 5.1, direction: 'SW', gust: 8.3 },
-      clouds: 45,
-      sunrise: '06:12',
-      sunset: '20:47',
+      wind: { speed: 5.1, direction: 'SW' },
       timestamp: new Date().toISOString(),
     },
   });
 });
 
 // ============================================================
-// imageAnalyzeHandler
+// Mock-only endpoints. They have no live provider yet, so they are
+// clearly labelled and cost 0 quota (markMock → refund).
 // ============================================================
 const imageAnalyzeHandler = withUsageLog(async (req, res) => {
   const { imageUrl, imageBase64 } = req.body;
   if (!imageUrl && !imageBase64) {
     return res.status(400).json({ success: false, error: 'Provide `imageUrl` or `imageBase64`' });
   }
-  const mockLabels = [
-    { label: 'Technology', confidence: 0.97 },
-    { label: 'Computer', confidence: 0.94 },
-    { label: 'Screen', confidence: 0.91 },
-    { label: 'Office', confidence: 0.83 },
-    { label: 'Desk', confidence: 0.79 },
-  ];
+  markMock(res);
   res.json({
     success: true,
-    source: imageUrl || 'base64_input',
+    source: 'mock',
+    notice: DEMO_NOTICE,
+    input: imageUrl ? 'url' : 'base64',
     analysis: {
       description: 'A modern workspace with computing equipment and digital displays.',
-      labels: mockLabels,
-      dominant_colors: ['#1a2744', '#4a90d9', '#f5a623', '#7ed321'],
+      labels: [
+        { label: 'Technology', confidence: 0.97 },
+        { label: 'Computer', confidence: 0.94 },
+        { label: 'Screen', confidence: 0.91 },
+      ],
+      dominant_colors: ['#1a2744', '#4a90d9', '#f5a623'],
       text_detected: null,
       faces_detected: 0,
-      safe_search: {
-        adult: 'VERY_UNLIKELY',
-        violence: 'VERY_UNLIKELY',
-        racy: 'VERY_UNLIKELY',
-      },
-      confidence: 0.94,
     },
     model: 'mock-vision-v1',
   });
 });
 
-// ============================================================
-// translateHandler
-// ============================================================
 const translateHandler = withUsageLog(async (req, res) => {
   const { text, targetLanguage, sourceLanguage = 'auto' } = req.body;
-  if (!text?.trim()) return res.status(400).json({ success: false, error: '`text` is required' });
-  if (!targetLanguage?.trim()) return res.status(400).json({ success: false, error: '`targetLanguage` is required' });
-  const mockTranslations = {
-    es: `[ES] ${text}`, fr: `[FR] ${text}`, de: `[DE] ${text}`,
-    ja: `[JA] ${text}`, zh: `[ZH] ${text}`, ar: `[AR] ${text}`,
-  };
+  markMock(res);
   res.json({
     success: true,
+    source: 'mock',
+    notice: DEMO_NOTICE,
     translation: {
       original: text,
-      translated: mockTranslations[targetLanguage] || `[${targetLanguage.toUpperCase()}] ${text}`,
+      translated: `[${targetLanguage.toUpperCase()}] ${text}`,
       sourceLanguage: sourceLanguage === 'auto' ? 'en' : sourceLanguage,
       targetLanguage,
-      confidence: 0.98,
     },
     model: 'mock-translate-v1',
-    source: 'mock',
   });
 });
 
-// ============================================================
-// sentimentHandler
-// ============================================================
 const sentimentHandler = withUsageLog(async (req, res) => {
   const { text } = req.body;
-  if (!text?.trim()) return res.status(400).json({ success: false, error: '`text` is required' });
-  const lower = text.toLowerCase();
-  const positiveWords = ['great', 'good', 'excellent', 'amazing', 'love', 'fantastic', 'wonderful', 'happy'];
-  const negativeWords = ['bad', 'terrible', 'awful', 'hate', 'horrible', 'worst', 'poor', 'disappointing'];
-  const posCount = positiveWords.filter(w => lower.includes(w)).length;
-  const negCount = negativeWords.filter(w => lower.includes(w)).length;
+  const words = text.toLowerCase().match(/[a-z']+/g) || [];
+  const positiveWords = new Set(['great', 'good', 'excellent', 'amazing', 'love', 'fantastic', 'wonderful', 'happy']);
+  const negativeWords = new Set(['bad', 'terrible', 'awful', 'hate', 'horrible', 'worst', 'poor', 'disappointing']);
+  const posCount = words.filter((w) => positiveWords.has(w)).length;
+  const negCount = words.filter((w) => negativeWords.has(w)).length;
   const score = (posCount - negCount) / Math.max(posCount + negCount, 1);
-  const sentiment = score > 0.1 ? 'positive' : score < -0.1 ? 'negative' : 'neutral';
-  const magnitude = Math.abs(score);
+  const label = score > 0.1 ? 'positive' : score < -0.1 ? 'negative' : 'neutral';
+
+  markMock(res);
   res.json({
     success: true,
+    source: 'mock',
+    notice: 'Keyword-based demo analysis. No quota was charged.',
     sentiment: {
-      label: sentiment,
+      label,
       score: parseFloat(score.toFixed(3)),
-      magnitude: parseFloat(magnitude.toFixed(3)),
-      breakdown: { positive: posCount, negative: negCount, neutral: text.split(' ').length - posCount - negCount },
-      emotions: {
-        joy: sentiment === 'positive' ? 0.7 : 0.1,
-        sadness: sentiment === 'negative' ? 0.6 : 0.05,
-        anger: sentiment === 'negative' ? 0.3 : 0.02,
-        surprise: 0.1,
-      },
+      magnitude: parseFloat(Math.abs(score).toFixed(3)),
+      breakdown: { positive: posCount, negative: negCount, neutral: words.length - posCount - negCount },
     },
     text_length: text.length,
-    model: 'mock-sentiment-v1',
+    model: 'keyword-sentiment-v1',
   });
 });
 
-// ============================================================
-// summarizeHandler
-// ============================================================
 const summarizeHandler = withUsageLog(async (req, res) => {
-  const { text, maxLength = 150, style = 'paragraph' } = req.body;
-  if (!text?.trim()) return res.status(400).json({ success: false, error: '`text` is required' });
-  if (text.length < 100) return res.status(400).json({ success: false, error: 'Text too short to summarize (min 100 characters)' });
+  const { text, style = 'paragraph' } = req.body;
+  const maxLength = parseInt(req.body.maxLength, 10) || 150;
+
   let summary = text.slice(0, maxLength);
   const lastDot = summary.lastIndexOf('. ');
   if (lastDot > 50) summary = summary.slice(0, lastDot + 1);
-  const keyPoints = text.split('. ').slice(0, 3).map(s => s.trim()).filter(Boolean);
+  const keyPoints = text.split('. ').slice(0, 3).map((s) => s.trim()).filter(Boolean);
+
+  markMock(res);
   res.json({
     success: true,
+    source: 'mock',
+    notice: 'Extractive demo summary (first sentences). No quota was charged.',
     summary: {
       text: summary + (text.length > maxLength ? ' [...]' : ''),
       key_points: keyPoints,
-      word_count: { original: text.split(' ').length, summary: summary.split(' ').length },
+      word_count: { original: text.split(/\s+/).length, summary: summary.split(/\s+/).length },
       reduction: `${Math.round((1 - summary.length / text.length) * 100)}%`,
       style,
     },
@@ -283,42 +282,30 @@ const summarizeHandler = withUsageLog(async (req, res) => {
   });
 });
 
-// ============================================================
-// geocodeHandler
-// ============================================================
 const geocodeHandler = withUsageLog(async (req, res) => {
   const { address, lat, lon } = req.query;
   if (!address && (!lat || !lon)) {
     return res.status(400).json({ success: false, error: 'Provide `address` or `lat` + `lon`' });
   }
+  markMock(res);
   if (address) {
-    res.json({
+    return res.json({
       success: true,
+      source: 'mock',
+      notice: DEMO_NOTICE,
       type: 'forward',
       query: address,
-      result: {
-        formatted_address: `${address}, United Kingdom`,
-        latitude: 51.5074,
-        longitude: -0.1278,
-        accuracy: 'rooftop',
-        components: { country: 'United Kingdom', city: 'London', postcode: 'EC1A 1BB' },
-        place_id: 'mock_place_ChIJdd4hrwug2EcRmSrV3Vo6llI',
-      },
-      source: 'mock',
-    });
-  } else {
-    res.json({
-      success: true,
-      type: 'reverse',
-      query: { lat: parseFloat(lat), lon: parseFloat(lon) },
-      result: {
-        formatted_address: `${parseFloat(lat).toFixed(4)}, ${parseFloat(lon).toFixed(4)} — London, UK`,
-        components: { country: 'United Kingdom', city: 'London', road: 'Whitehall', postcode: 'SW1A 2AA' },
-        place_id: 'mock_place_reverse_001',
-      },
-      source: 'mock',
+      result: { formatted_address: address, latitude: 51.5074, longitude: -0.1278, accuracy: 'demo' },
     });
   }
+  res.json({
+    success: true,
+    source: 'mock',
+    notice: DEMO_NOTICE,
+    type: 'reverse',
+    query: { lat: parseFloat(lat), lon: parseFloat(lon) },
+    result: { formatted_address: `${parseFloat(lat).toFixed(4)}, ${parseFloat(lon).toFixed(4)}`, accuracy: 'demo' },
+  });
 });
 
 module.exports = {

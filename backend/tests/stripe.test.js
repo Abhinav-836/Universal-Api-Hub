@@ -8,21 +8,17 @@ const jwt = require('jsonwebtoken');
 jest.mock('../src/models/user.model');
 jest.mock('../src/services/rateLimit.service', () => ({
   checkIpLimit: jest.fn().mockResolvedValue(false),
-  checkAndIncrement: jest.fn().mockResolvedValue({ allowed: true, limit: 10, used: 1, remaining: 9 })
+  checkAndIncrement: jest.fn().mockResolvedValue({ allowed: true, limit: 10, used: 1, remaining: 9 }),
+  refund: jest.fn().mockResolvedValue(undefined),
 }));
 
 describe('Stripe Webhook and Checkout', () => {
   let token;
 
   beforeAll(() => {
-    process.env.STRIPE_PRICE_ID_PRO = 'price_pro';
-    process.env.STRIPE_PRICE_ID_PREMIUM = 'price_premium';
-    process.env.STRIPE_SECRET_KEY = 'sk_test_123';
-    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_123';
-    
     const { JWT_SECRET } = require('../src/config/jwt');
     token = jwt.sign({ userId: 'user-123' }, JWT_SECRET);
-    UserModel.findById.mockResolvedValue({ id: 'user-123', email: 'test@example.com' });
+    UserModel.findById.mockResolvedValue({ id: 'user-123', email: 'test@example.com', is_active: true });
   });
 
   afterAll(async () => {
@@ -36,20 +32,21 @@ describe('Stripe Webhook and Checkout', () => {
         .post('/api/user/checkout')
         .set('Cookie', [`jwt=${token}`])
         .send({ plan: 'invalid_plan' });
-        
+
       expect(res.statusCode).toBe(400);
       expect(res.body.success).toBe(false);
     });
 
-    it('should return 500 if Stripe is not mocked/configured properly', async () => {
-      UserModel.findById.mockResolvedValue({ id: 'user-123', email: 'test@example.com' });
-      
+    it('should return 501 when Stripe is not configured with a real key', async () => {
+      // jest.setup.js uses the fake key "sk_test_123", which must NOT be
+      // treated as a configured Stripe account.
       const res = await request(app)
         .post('/api/user/checkout')
         .set('Cookie', [`jwt=${token}`])
         .send({ plan: 'pro' });
-        
-      expect(res.statusCode).toBe(500);
+
+      expect(res.statusCode).toBe(501);
+      expect(res.body.success).toBe(false);
     });
   });
 
@@ -58,7 +55,7 @@ describe('Stripe Webhook and Checkout', () => {
       const res = await request(app)
         .post('/webhook/stripe')
         .send({});
-        
+
       expect(res.statusCode).toBe(400);
     });
   });
