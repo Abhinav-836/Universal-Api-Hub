@@ -4,9 +4,7 @@ const YahooFinance = require('yahoo-finance2').default;
 const { getRedis, TTL } = require('../config/redis');
 const logger = require('../utils/logger');
 
-// FIX: yahoo-finance2 v3 must be instantiated. The old v2-style call
-// (`require(...).default.quote(...)`) threw "Call `const yahooFinance = new
-// YahooFinance()` first" on every request, so this tier never worked.
+// yahoo-finance2 v3 must be instantiated.
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 // ── Provider configuration ────────────────────────────────────
@@ -14,7 +12,15 @@ const ALPHA_VANTAGE_API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
 const FINNHUB_API_KEY       = process.env.FINNHUB_API_KEY;
 const ALPHA_VANTAGE_BASE    = 'https://www.alphavantage.co/query';
 const FINNHUB_BASE          = 'https://finnhub.io/api/v1';
+const FRANKFURTER_BASE      = 'https://api.frankfurter.dev/v1';   // ECB rates, no key
+const COINBASE_BASE         = 'https://api.coinbase.com/v2';      // crypto spot, no key
 const HTTP_TIMEOUT_MS       = 8000;
+
+if (!FINNHUB_API_KEY) {
+  // FIX: a missing key used to be skipped silently, which hid the fact that
+  // stock quotes were relying on Alpha Vantage's 25/day free quota.
+  logger.warn('FINNHUB_API_KEY is not set — stock quotes/search will fall back to Alpha Vantage (25 req/day) and Yahoo');
+}
 
 // A provider returns:
 //   - a result object/array  → success
@@ -29,7 +35,7 @@ const httpError = (statusCode, message) => {
 };
 
 // ============================================================
-// TIER 1: Alpha Vantage
+// Alpha Vantage (25 requests/day on the free key — last resort for stocks)
 // ============================================================
 async function fetchFromAlphaVantage(params) {
   if (!ALPHA_VANTAGE_API_KEY) return null;
@@ -41,7 +47,9 @@ async function fetchFromAlphaVantage(params) {
     const d = response.data;
     if (d['Error Message']) return NOT_FOUND; // invalid symbol / currency
     if (d['Note'] || d['Information']) {
-      logger.warn('Alpha Vantage rate-limited', { msg: d['Note'] || d['Information'] });
+      // FIX: Alpha Vantage's rate-limit message contains the API key in
+      // plain text, and it was logged verbatim. Log a fixed message instead.
+      logger.warn('Alpha Vantage rate-limited (free tier: 25 requests/day)');
       return null;
     }
     return d;
@@ -104,7 +112,7 @@ async function alphaVantageRate(from, to) {
 }
 
 // ============================================================
-// TIER 2: Finnhub (stocks only on the free tier)
+// Finnhub (60 requests/min on the free key — primary for stocks)
 // ============================================================
 async function fetchFromFinnhub(path, params = {}) {
   if (!FINNHUB_API_KEY) return null;
@@ -166,7 +174,58 @@ async function finnhubSearch(keywords) {
 }
 
 // ============================================================
-// TIER 3: Yahoo Finance
+// Frankfurter (ECB reference rates, no key, updated once per working day)
+// ============================================================
+async function frankfurterRate(from, to) {
+  try {
+    const { data } = await axios.get(`${FRANKFURTER_BASE}/latest`, {
+      params: { from, to },
+      timeout: HTTP_TIMEOUT_MS,
+    });
+    const rate = data?.rates?.[to];
+    if (rate == null) return NOT_FOUND;
+    return {
+      rate,
+      lastRefreshed: data.date, // ECB publishes once per working day
+      bid: null,
+      ask: null,
+      source: 'frankfurter_ecb_daily',
+    };
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 404 || status === 422 || status === 400) return NOT_FOUND; // unsupported currency
+    logger.warn('Frankfurter request failed', { error: err.message, status });
+    return null;
+  }
+}
+
+// ============================================================
+// Coinbase (live crypto spot price, no key)
+// ============================================================
+async function coinbaseSpot(symbol, market) {
+  try {
+    const { data } = await axios.get(`${COINBASE_BASE}/prices/${symbol}-${market}/spot`, {
+      timeout: HTTP_TIMEOUT_MS,
+    });
+    const amount = parseFloat(data?.data?.amount);
+    if (!Number.isFinite(amount)) return NOT_FOUND;
+    return {
+      rate: amount,
+      lastRefreshed: new Date().toISOString(),
+      bid: null,
+      ask: null,
+      source: 'coinbase',
+    };
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 400 || status === 404) return NOT_FOUND; // unknown pair
+    logger.warn('Coinbase request failed', { error: err.message, status });
+    return null;
+  }
+}
+
+// ============================================================
+// Yahoo Finance (often blocked from cloud hosts like Render — last resort)
 // ============================================================
 function withTimeout(promise, ms, label) {
   let timer;
@@ -188,8 +247,6 @@ async function yahooQuoteRaw(symbol, label) {
     if (!q || q.regularMarketPrice == null) return NOT_FOUND;
     return q;
   } catch (err) {
-    // yahoo-finance2 throws for unknown symbols too; treat "not found"
-    // style messages as NOT_FOUND, everything else as unavailable.
     if (/not found|no data|invalid/i.test(err.message)) return NOT_FOUND;
     logger.warn(`${label} failed`, { symbol, error: err.message });
     return null;
@@ -257,10 +314,7 @@ async function yahooRate(ySymbol) {
 }
 
 // ============================================================
-// FALLBACK RUNNER
-// FIX: there is no mock tier any more. Returning a made-up price with
-// success:true is the worst thing a market-data API can do. Unknown
-// symbols now 404, and provider outages 503 (and the quota is refunded).
+// FALLBACK RUNNER — no mock tier: unknown symbol → 404, outage → 503
 // ============================================================
 async function runProviders(providers, { notFoundMessage, emptyIsResult = false }) {
   let sawNotFound = false;
@@ -304,14 +358,20 @@ async function cached(cacheKey, ttl, producer) {
 
 // ============================================================
 // SERVICE
+// FIX: provider order. Alpha Vantage (25/day) used to be tried FIRST for
+// everything, so it was exhausted almost immediately and every later call
+// paid an extra round-trip to it. Now:
+//   stocks: Finnhub (60/min) → Alpha Vantage → Yahoo
+//   forex:  Alpha Vantage (live) → Frankfurter (ECB daily) → Yahoo
+//   crypto: Coinbase (live)      → Alpha Vantage → Yahoo
 // ============================================================
 const MarketService = {
   async getStockQuote(userId, symbol) {
     const sym = symbol.trim().toUpperCase();
     return cached(`market:quote:${sym}`, TTL.ONE_MINUTE, () =>
       runProviders([
-        { name: 'alpha_vantage', fn: () => alphaVantageQuote(sym) },
         { name: 'finnhub',       fn: () => finnhubQuote(sym) },
+        { name: 'alpha_vantage', fn: () => alphaVantageQuote(sym) },
         { name: 'yahoo',         fn: () => yahooQuote(sym) },
       ], { notFoundMessage: `Symbol "${sym}" not found` })
     );
@@ -321,8 +381,8 @@ const MarketService = {
     const kw = keywords.trim();
     return cached(`market:search:${kw.toLowerCase()}`, TTL.FIVE_MINUTES, () =>
       runProviders([
-        { name: 'alpha_vantage', fn: () => alphaVantageSearch(kw) },
         { name: 'finnhub',       fn: () => finnhubSearch(kw) },
+        { name: 'alpha_vantage', fn: () => alphaVantageSearch(kw) },
         { name: 'yahoo',         fn: () => yahooSearch(kw) },
       ], { notFoundMessage: 'No matching symbols', emptyIsResult: true })
     );
@@ -334,19 +394,19 @@ const MarketService = {
     const rate = await cached(`market:forex:${from}${to}`, TTL.ONE_MINUTE * 2, () =>
       runProviders([
         { name: 'alpha_vantage', fn: () => alphaVantageRate(from, to) },
+        { name: 'frankfurter',   fn: () => frankfurterRate(from, to) },
         { name: 'yahoo',         fn: () => yahooRate(`${from}${to}=X`) },
       ], { notFoundMessage: `Currency pair ${from}/${to} not found` })
     );
     return { from, to, ...rate };
   },
 
-  // FIX: response shape is now identical whichever provider answers
-  // (Alpha Vantage used to return {from,to,rate}, Yahoo {symbol,market,price}).
   async getCryptoRate(userId, symbol, market = 'USD') {
     const sym = symbol.trim().toUpperCase();
     const mkt = market.trim().toUpperCase();
     const r = await cached(`market:crypto:${sym}${mkt}`, TTL.ONE_MINUTE, () =>
       runProviders([
+        { name: 'coinbase',      fn: () => coinbaseSpot(sym, mkt) },
         { name: 'alpha_vantage', fn: () => alphaVantageRate(sym, mkt) },
         { name: 'yahoo',         fn: () => yahooRate(`${sym}-${mkt}`) },
       ], { notFoundMessage: `Crypto pair ${sym}/${mkt} not found` })
