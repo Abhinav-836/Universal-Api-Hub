@@ -1,6 +1,6 @@
 # Universal API Hub
 
-One API key, many APIs. Sign up, pick a plan, choose which APIs you want, and call stocks, forex, crypto, weather, news, sports and LLM chat through a single gateway — with per-plan daily quotas, weighted request costs, scoped API keys and a usage dashboard.
+One API key, many APIs. Sign up, pick a plan, choose which APIs you want, and call stocks, forex, crypto, weather, news, sports, LLM chat, translation, sentiment, summarization, image analysis and geocoding through a single gateway — with per-plan daily quotas, weighted request costs, scoped API keys and a usage dashboard.
 
 **Live:** [universal-api-hub.vercel.app](https://universal-api-hub.vercel.app)
 
@@ -23,7 +23,7 @@ GET /api/v1/stocks/quote?symbol=AAPL      X-API-Key: <your key>
   ─► provider chain ─► response + X-RateLimit-* headers ─► usage logged
 ```
 
-Demo responses (APIs without a live provider yet) are clearly labelled `"source": "mock"` and refund the quota they would have used.
+When a provider key isn't configured, responses are clearly labelled `"source": "mock"` and refund the quota they would have used. Failed calls (4xx/5xx) are refunded too.
 
 ## APIs
 
@@ -38,9 +38,13 @@ Demo responses (APIs without a live provider yet) are clearly labelled `"source"
 | AI chat | `POST /api/v1/chat` | 3 | Free | OpenRouter |
 | Sports | `GET /api/v1/sports` | 2 | Pro | SportsDataIO (cached 1 min) |
 | LLM chat (OpenAI-compatible) | `POST /api/v1/llm/chat` | 5 | Premium | OpenRouter |
-| Image analysis, translate, sentiment, summarize, geocode | various | — | Pro / Premium | **Demo only** — no live provider yet, no quota charged |
+| Translate | `POST /api/v1/translate` | 2 | Pro | OpenRouter |
+| Image analysis | `POST /api/v1/image/analyze` | 5 | Pro | OpenRouter vision model |
+| Sentiment | `POST /api/v1/sentiment` | 2 | Premium | OpenRouter |
+| Summarize | `POST /api/v1/summarize` | 3 | Premium | OpenRouter |
+| Geocoding | `GET /api/v1/geocode` | 1 | Premium | OpenWeather Geocoding (city level) |
 
-Weather, news, sports and both chat APIs return labelled demo data (and charge no quota) when their provider key isn't set, so a fresh install still works end to end. Market data is different: it never returns made-up numbers — an unknown symbol is a `404`, and if every provider is down you get a `503`.
+Every API except market data returns labelled demo data (and charges no quota) when its provider key isn't set, so a fresh install still works end to end. Market data is different: it never returns made-up numbers — an unknown symbol is a `404`, and if every provider is down you get a `503`.
 
 ## Plans
 
@@ -117,7 +121,8 @@ Crypto (Coinbase), forex (Frankfurter) and Yahoo Finance need no key, so market 
 | `FRONTEND_URL` | | Allowed CORS origin |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_PRO`, `STRIPE_PRICE_ID_PREMIUM` | in production | Stripe webhook endpoint: `POST /webhook/stripe` |
 | `BETA_FREE_UPGRADES` | | `true` (default) lets users change plan without paying |
-| `OPENROUTER_MODEL_FREE` / `_PRO` / `_ALL` | | Comma-separated model IDs per plan |
+| `OPENROUTER_MODEL_FREE` / `_PRO` / `_ALL` | | Comma-separated model IDs per plan, tried in order (also used by translate, sentiment and summarize) |
+| `OPENROUTER_MODEL_VISION` | | Comma-separated vision-capable models for image analysis. Default `openai/gpt-4o-mini` |
 | `IP_RATE_LIMIT_MAX`, `IP_RATE_LIMIT_WINDOW_MS` | | Per-IP limit on `/api/v1` |
 
 Frontend: `VITE_API_BASE` — the backend URL. Required in production.
@@ -147,7 +152,7 @@ cd frontend && npm test       # Vitest
 backend/src/
   routes/        auth, user (dashboard, plans, keys), api (/v1/*)
   middleware/    API key auth, scopes, plan access, rate limiting
-  services/      market, news, sports, llm, api keys, usage, rate limits
+  services/      market, news, sports, llm, AI tools, geocoding, api keys, usage, rate limits
   controllers/   request handlers
   config/        Postgres, Redis, JWT, env validation
 database/        schema.sql, seed.sql, migrations 001–007

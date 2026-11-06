@@ -2,6 +2,8 @@
 const { validationResult } = require('express-validator');
 const ApiKeyService = require('../services/apiKey.service');
 const LlmService = require('../services/llm.service');
+const AiTools = require('../services/aiTools.service');
+const GeocodeService = require('../services/geocode.service');
 const { getRedis } = require('../config/redis');
 const axios = require('axios');
 const { withUsageLog, markMock } = require('../utils/apiHandler');
@@ -185,14 +187,24 @@ const weatherHandler = withUsageLog(async (req, res) => {
 });
 
 // ============================================================
-// Mock-only endpoints. They have no live provider yet, so they are
-// clearly labelled and cost 0 quota (markMock → refund).
+// Translate, sentiment, summarize, image analysis (OpenRouter) and
+// geocoding (OpenWeather). Live when the provider key is set; without it
+// they return clearly labelled demo data and cost 0 quota (markMock →
+// refund). Provider failures are 503s, also refunded.
 // ============================================================
+const userPlan = (req) => req.user?.plan || 'free';
+
 const imageAnalyzeHandler = withUsageLog(async (req, res) => {
   const { imageUrl, imageBase64 } = req.body;
   if (!imageUrl && !imageBase64) {
     return res.status(400).json({ success: false, error: 'Provide `imageUrl` or `imageBase64`' });
   }
+
+  if (LlmService.isConfigured()) {
+    const result = await AiTools.analyzeImage({ imageUrl, imageBase64, plan: userPlan(req) });
+    return res.json({ success: true, source: 'openrouter', ...result });
+  }
+
   markMock(res);
   res.json({
     success: true,
@@ -201,14 +213,10 @@ const imageAnalyzeHandler = withUsageLog(async (req, res) => {
     input: imageUrl ? 'url' : 'base64',
     analysis: {
       description: 'A modern workspace with computing equipment and digital displays.',
-      labels: [
-        { label: 'Technology', confidence: 0.97 },
-        { label: 'Computer', confidence: 0.94 },
-        { label: 'Screen', confidence: 0.91 },
-      ],
-      dominant_colors: ['#1a2744', '#4a90d9', '#f5a623'],
+      labels: ['technology', 'computer', 'screen'],
+      objects: ['laptop', 'monitor', 'keyboard'],
       text_detected: null,
-      faces_detected: 0,
+      people_count: 0,
     },
     model: 'mock-vision-v1',
   });
@@ -216,6 +224,12 @@ const imageAnalyzeHandler = withUsageLog(async (req, res) => {
 
 const translateHandler = withUsageLog(async (req, res) => {
   const { text, targetLanguage, sourceLanguage = 'auto' } = req.body;
+
+  if (LlmService.isConfigured()) {
+    const result = await AiTools.translate({ text, targetLanguage, sourceLanguage, plan: userPlan(req) });
+    return res.json({ success: true, source: 'openrouter', ...result });
+  }
+
   markMock(res);
   res.json({
     success: true,
@@ -233,6 +247,12 @@ const translateHandler = withUsageLog(async (req, res) => {
 
 const sentimentHandler = withUsageLog(async (req, res) => {
   const { text } = req.body;
+
+  if (LlmService.isConfigured()) {
+    const result = await AiTools.sentiment({ text, plan: userPlan(req) });
+    return res.json({ success: true, source: 'openrouter', ...result });
+  }
+
   const words = text.toLowerCase().match(/[a-z']+/g) || [];
   const positiveWords = new Set(['great', 'good', 'excellent', 'amazing', 'love', 'fantastic', 'wonderful', 'happy']);
   const negativeWords = new Set(['bad', 'terrible', 'awful', 'hate', 'horrible', 'worst', 'poor', 'disappointing']);
@@ -250,7 +270,8 @@ const sentimentHandler = withUsageLog(async (req, res) => {
       label,
       score: parseFloat(score.toFixed(3)),
       magnitude: parseFloat(Math.abs(score).toFixed(3)),
-      breakdown: { positive: posCount, negative: negCount, neutral: words.length - posCount - negCount },
+      emotions: [],
+      explanation: `Demo: ${posCount} positive and ${negCount} negative keywords found.`,
     },
     text_length: text.length,
     model: 'keyword-sentiment-v1',
@@ -260,6 +281,11 @@ const sentimentHandler = withUsageLog(async (req, res) => {
 const summarizeHandler = withUsageLog(async (req, res) => {
   const { text, style = 'paragraph' } = req.body;
   const maxLength = parseInt(req.body.maxLength, 10) || 150;
+
+  if (LlmService.isConfigured()) {
+    const result = await AiTools.summarize({ text, maxLength, style, plan: userPlan(req) });
+    return res.json({ success: true, source: 'openrouter', ...result });
+  }
 
   let summary = text.slice(0, maxLength);
   const lastDot = summary.lastIndexOf('. ');
@@ -287,6 +313,22 @@ const geocodeHandler = withUsageLog(async (req, res) => {
   if (!address && (!lat || !lon)) {
     return res.status(400).json({ success: false, error: 'Provide `address` or `lat` + `lon`' });
   }
+
+  if (GeocodeService.isConfigured()) {
+    if (address) {
+      const { result, results } = await GeocodeService.forward(address);
+      return res.json({ success: true, source: 'openweathermap', type: 'forward', query: address, result, results });
+    }
+    const { result } = await GeocodeService.reverse(parseFloat(lat), parseFloat(lon));
+    return res.json({
+      success: true,
+      source: 'openweathermap',
+      type: 'reverse',
+      query: { lat: parseFloat(lat), lon: parseFloat(lon) },
+      result,
+    });
+  }
+
   markMock(res);
   if (address) {
     return res.json({

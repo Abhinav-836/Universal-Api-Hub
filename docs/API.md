@@ -139,23 +139,116 @@ Cost weight: **3**
 ---
 
 ### POST /api/v1/image/analyze
-Cost weight: **5**
+Cost weight: **5** · Min plan: Pro · Provider: OpenRouter vision model (`OPENROUTER_MODEL_VISION`)
 
-**Body:** `{ "imageUrl": "https://..." }` or `{ "imageBase64": "base64string" }`
+**Body:** `{ "imageUrl": "https://..." }` or `{ "imageBase64": "<base64 or data URL>" }`
+
+`imageUrl` must be a direct, public link. `imageBase64` must be a PNG, JPEG, GIF or WebP image (checked from the bytes, max ~5 MB).
 
 **Response:**
 ```json
 {
   "success": true,
+  "source": "openrouter",
+  "model": "openai/gpt-4o-mini",
+  "input": "url",
   "analysis": {
-    "description": "...",
-    "tags": ["..."],
-    "objects": [{ "label": "...", "confidence": 0.94 }],
-    "dominant_colors": ["#hex"],
-    "safe_search": { "adult": "VERY_UNLIKELY" }
+    "description": "A cat asleep on a grey sofa.",
+    "labels": ["cat", "indoor", "furniture"],
+    "objects": ["cat", "sofa", "cushion"],
+    "text_detected": null,
+    "people_count": 0
   }
 }
 ```
+`422` if the image can't be read (bad link, not an image). Not charged.
+
+---
+
+### POST /api/v1/translate
+Cost weight: **2** · Min plan: Pro · Provider: OpenRouter (your plan's models)
+
+**Body:** `{ "text": "Hello world", "targetLanguage": "es", "sourceLanguage": "auto" }`
+
+Languages can be codes (`es`, `pt-BR`) or names (`Spanish`). `text` up to 5,000 characters.
+
+**Response:**
+```json
+{
+  "success": true,
+  "source": "openrouter",
+  "translation": { "original": "Hello world", "translated": "Hola mundo", "sourceLanguage": "en", "targetLanguage": "es" }
+}
+```
+
+---
+
+### POST /api/v1/sentiment
+Cost weight: **2** · Min plan: Premium · Provider: OpenRouter
+
+**Body:** `{ "text": "The update is fast but the new UI is confusing." }`
+
+**Response:**
+```json
+{
+  "success": true,
+  "source": "openrouter",
+  "sentiment": {
+    "label": "mixed",
+    "score": -0.1,
+    "magnitude": 0.5,
+    "emotions": ["satisfaction", "frustration"],
+    "explanation": "Praises the speed but criticises the confusing UI."
+  },
+  "text_length": 47
+}
+```
+`label` is one of `positive`, `negative`, `neutral`, `mixed`. `score` is −1 to 1, `magnitude` 0 to 1.
+
+---
+
+### POST /api/v1/summarize
+Cost weight: **3** · Min plan: Premium · Provider: OpenRouter
+
+**Body:** `{ "text": "<100–20,000 characters>", "maxLength": 150, "style": "paragraph" }`
+
+`maxLength` is the target length in characters (50–1000). `style` is `paragraph` or `bullets`.
+
+**Response:**
+```json
+{
+  "success": true,
+  "source": "openrouter",
+  "summary": {
+    "text": "Revenue grew 12% while costs fell.",
+    "key_points": ["Revenue up 12%", "Costs down"],
+    "word_count": { "original": 480, "summary": 6 },
+    "reduction": "93%",
+    "style": "paragraph"
+  }
+}
+```
+With `"style": "bullets"`, `summary.bullets` is an array and `summary.text` joins them as `•` lines.
+
+---
+
+### GET /api/v1/geocode
+Cost weight: **1** · Min plan: Premium · Provider: OpenWeather Geocoding (uses `WEATHER_API_KEY`)
+
+**Query:** `?address=Jamshedpur` (forward) or `?lat=22.80&lon=86.20` (reverse)
+
+**Response (forward):**
+```json
+{
+  "success": true,
+  "source": "openweathermap",
+  "type": "forward",
+  "query": "Jamshedpur",
+  "result": { "name": "Jamshedpur", "state": "Jharkhand", "country": "IN", "formatted_address": "Jamshedpur, Jharkhand, IN", "latitude": 22.80457, "longitude": 86.20288 },
+  "results": [ "...up to 5 matches, best first" ]
+}
+```
+Results are city / town level, not street addresses. `404` when nothing matches. Not charged.
 
 ---
 
