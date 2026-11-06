@@ -12,16 +12,36 @@ import { RefreshCw, Crown, X, Layers, Terminal } from 'lucide-react';
 import api from '../services/api';
 
 // API Playground (mini, for dashboard)
+// Every /api/v1 endpoint, with a working example. GET endpoints get an
+// editable query string; POST endpoints an editable JSON body.
+const SUMMARY_SAMPLE =
+  'Universal API Hub lets developers call many APIs with a single key. Users pick a plan, choose the APIs they need, ' +
+  'and every request is checked against their daily quota. Failed requests and demo responses are refunded, so users ' +
+  'only pay for successful calls. The dashboard shows usage by API and by day.';
+
 const ENDPOINTS = [
-  { label: 'POST /api/v1/chat', method: 'POST', path: '/api/v1/chat', defaultBody: JSON.stringify({ message: 'Hello!' }, null, 2) },
-  { label: 'GET /api/v1/weather', method: 'GET', path: '/api/v1/weather?city=London', defaultBody: null },
-  { label: 'GET /api/v1/stocks/quote', method: 'GET', path: '/api/v1/stocks/quote?symbol=AAPL', defaultBody: null },
-  { label: 'POST /api/v1/sentiment', method: 'POST', path: '/api/v1/sentiment', defaultBody: JSON.stringify({ text: 'This is great!' }, null, 2) },
+  { group: 'AI', method: 'POST', path: '/api/v1/chat', body: { message: 'Hello!' } },
+  { group: 'AI', method: 'POST', path: '/api/v1/llm/chat', body: { message: 'Explain what an API gateway is in one sentence.', temperature: 0.4 } },
+  { group: 'AI', method: 'POST', path: '/api/v1/translate', body: { text: 'Hello, how are you today?', targetLanguage: 'hi' } },
+  { group: 'AI', method: 'POST', path: '/api/v1/sentiment', body: { text: 'The app is fast, but the new UI is confusing.' } },
+  { group: 'AI', method: 'POST', path: '/api/v1/summarize', body: { text: SUMMARY_SAMPLE, maxLength: 150, style: 'paragraph' } },
+  { group: 'AI', method: 'POST', path: '/api/v1/image/analyze', body: { imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg' } },
+  { group: 'Data', method: 'GET', path: '/api/v1/weather', query: 'city=London&units=metric' },
+  { group: 'Data', method: 'GET', path: '/api/v1/geocode', query: 'address=Jamshedpur' },
+  { group: 'Data', method: 'GET', path: '/api/v1/news', query: 'category=technology&pageSize=5' },
+  { group: 'Data', method: 'GET', path: '/api/v1/sports', query: 'league=cricket&pageSize=5' },
+  { group: 'Markets', method: 'GET', path: '/api/v1/stocks/quote', query: 'symbol=AAPL' },
+  { group: 'Markets', method: 'GET', path: '/api/v1/stocks/search', query: 'keywords=reliance' },
+  { group: 'Markets', method: 'GET', path: '/api/v1/forex', query: 'from=USD&to=INR' },
+  { group: 'Markets', method: 'GET', path: '/api/v1/crypto', query: 'symbol=BTC&market=USD' },
 ];
+const GROUPS = [...new Set(ENDPOINTS.map((e) => e.group))];
+const defaultBodyFor = (endpoint) => (endpoint.body ? JSON.stringify(endpoint.body, null, 2) : '');
 
 function MiniPlayground({ userApiKey }) {
   const [ep, setEp] = useState(ENDPOINTS[0]);
-  const [body, setBody] = useState(ENDPOINTS[0].defaultBody || '');
+  const [body, setBody] = useState(defaultBodyFor(ENDPOINTS[0]));
+  const [query, setQuery] = useState(ENDPOINTS[0].query || '');
   const [apiKey, setApiKey] = useState(userApiKey || '');
   const [response, setRes] = useState(null);
   const [loading, setLd] = useState(false);
@@ -29,6 +49,16 @@ function MiniPlayground({ userApiKey }) {
 
   // Pick up a newly created key without requiring a page reload
   useEffect(() => { if (userApiKey) setApiKey(userApiKey); }, [userApiKey]);
+
+  const choose = (path) => {
+    const found = ENDPOINTS.find((x) => x.path === path);
+    if (!found) return;
+    setEp(found);
+    setBody(defaultBodyFor(found));
+    setQuery(found.query || '');
+    setRes(null);
+    setEl(null);
+  };
 
   const run = async () => {
     if (!apiKey.trim()) {
@@ -45,14 +75,17 @@ function MiniPlayground({ userApiKey }) {
       }
     }
 
+    const qs = query.trim().replace(/^\?/, '');
+    const url = ep.method === 'GET' && qs ? `${ep.path}?${qs}` : ep.path;
+
     setLd(true);
     setRes(null);
     const t0 = Date.now();
     try {
       const headers = { 'X-API-Key': apiKey.trim() };
       const res = ep.method === 'POST'
-        ? await api.post(ep.path, parsedBody, { headers })
-        : await api.get(ep.path, { headers });
+        ? await api.post(url, parsedBody, { headers })
+        : await api.get(url, { headers });
       setEl(Date.now() - t0);
       setRes({ data: res.data, status: res.status });
     } catch (err) {
@@ -63,6 +96,9 @@ function MiniPlayground({ userApiKey }) {
     }
   };
 
+  const fieldClass =
+    'w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 placeholder-slate-700 focus:outline-none focus:border-brand-500/40 transition-all';
+
   return (
     <div className="card-glass rounded-2xl p-5">
       <div className="flex items-center gap-2 mb-4">
@@ -71,35 +107,57 @@ function MiniPlayground({ userApiKey }) {
         <span className="ml-auto text-[10px] bg-brand-500/15 text-brand-300 px-2 py-0.5 rounded-full font-mono">LIVE</span>
       </div>
 
+      <label htmlFor="pg-endpoint" className="sr-only">Endpoint</label>
       <select
+        id="pg-endpoint"
         value={ep.path}
-        onChange={(e) => {
-          const found = ENDPOINTS.find((x) => x.path === e.target.value);
-          if (found) {
-            setEp(found);
-            setBody(found.defaultBody || '');
-            setRes(null);
-          }
-        }}
+        onChange={(e) => choose(e.target.value)}
         className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 mb-3 focus:outline-none focus:border-brand-500/40"
       >
-        {ENDPOINTS.map((e) => <option key={e.path} value={e.path}>{e.label}</option>)}
+        {GROUPS.map((group) => (
+          <optgroup key={group} label={group}>
+            {ENDPOINTS.filter((e) => e.group === group).map((e) => (
+              <option key={e.path} value={e.path}>{`${e.method} ${e.path}`}</option>
+            ))}
+          </optgroup>
+        ))}
       </select>
 
+      <label htmlFor="pg-key" className="sr-only">API key</label>
       <input
+        id="pg-key"
         value={apiKey}
         onChange={(e) => setApiKey(e.target.value)}
         placeholder="uhb_your_api_key_here"
-        className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-xs font-mono text-slate-300 placeholder-slate-700 focus:outline-none focus:border-brand-500/40 mb-3 transition-all"
+        className={`${fieldClass} py-2.5 mb-3`}
       />
 
-      {ep.method === 'POST' && (
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={3}
-          className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-brand-500/40 resize-none mb-3"
-        />
+      {ep.method === 'GET' ? (
+        <div className="mb-3">
+          <label htmlFor="pg-query" className="block text-[10px] text-slate-500 font-mono mb-1">
+            {ep.path}?
+          </label>
+          <input
+            id="pg-query"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') run(); }}
+            placeholder="key=value&key2=value2"
+            className={fieldClass}
+          />
+        </div>
+      ) : (
+        <>
+          <label htmlFor="pg-body" className="block text-[10px] text-slate-500 font-mono mb-1">JSON body</label>
+          <textarea
+            id="pg-body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={6}
+            spellCheck={false}
+            className={`${fieldClass} resize-y mb-3`}
+          />
+        </>
       )}
 
       <button
@@ -119,9 +177,17 @@ function MiniPlayground({ userApiKey }) {
                 {response.status}
               </span>
             )}
+            {response.data?.source && (
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${response.data.source === 'mock' ? 'text-amber-300 bg-amber-900/30' : 'text-slate-400 bg-white/5'}`}
+                title={response.data.source === 'mock' ? 'Demo data — the provider key is not set on the server' : 'Live provider'}
+              >
+                {response.data.source}
+              </span>
+            )}
             {elapsed != null && <span className="text-[10px] text-slate-600 ml-auto font-mono">{elapsed}ms</span>}
           </div>
-          <pre className="bg-black/40 border border-white/5 rounded-xl p-3 text-[10px] font-mono text-slate-300 overflow-auto max-h-36 scrollbar-hide">
+          <pre className="bg-black/40 border border-white/5 rounded-xl p-3 text-[10px] font-mono text-slate-300 overflow-auto max-h-72 whitespace-pre-wrap break-words">
             {typeof (response.data || response.error) === 'string'
               ? response.data || response.error
               : JSON.stringify(response.data || response.error, null, 2)}
