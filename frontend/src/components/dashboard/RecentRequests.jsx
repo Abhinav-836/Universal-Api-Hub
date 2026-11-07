@@ -45,7 +45,7 @@ export default function RecentRequests({ requests = [] }) {
           </thead>
           <tbody>
             {requests.map((r, i) => (
-              <tr key={r.id || i} className="border-b border-white/3 hover:bg-white/2 transition-colors group">
+              <tr key={r.id || i} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors group">
                 <td className="px-5 py-2.5 font-mono text-[11px] text-slate-300 truncate max-w-[140px]">{r.endpoint}</td>
                 <td className="px-3 py-2.5 text-xs text-slate-400 truncate max-w-[100px]">{r.api_name || r.apiName}</td>
                 <td className="px-3 py-2.5"><StatusBadge status={r.status_code || r.status || 200} /></td>

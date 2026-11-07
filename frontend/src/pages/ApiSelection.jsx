@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { ApiGridSkeleton } from '../components/ui/Skeleton';
 import { useAuth } from '../context/AuthContext';
 import { dashboardService, planService } from '../services/auth';
 import ApiCard from '../components/apis/ApiCard';
@@ -236,18 +237,7 @@ export default function ApiSelection() {
         </div>
 
         {loading ? (
-          <div className="space-y-8">
-            {[...Array(2)].map((_, s) => (
-              <div key={s}>
-                <div className="h-5 w-40 bg-white/5 rounded mb-4 animate-pulse" />
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {[...Array(4)].map((_, c) => (
-                    <div key={c} className="h-56 bg-white/5 rounded-2xl animate-pulse" />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <ApiGridSkeleton />
         ) : grouped.length === 0 ? (
           <div className="card-glass rounded-2xl p-16 text-center">
             <Globe size={40} className="text-slate-600 mx-auto mb-3" />

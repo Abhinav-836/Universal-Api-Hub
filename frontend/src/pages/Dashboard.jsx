@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { DashboardBodySkeleton } from '../components/ui/Skeleton';
 import { useAuth } from '../context/AuthContext';
 import { dashboardService, planService } from '../services/auth';
 import StatsCards from '../components/dashboard/StatsCards';
@@ -362,12 +363,7 @@ export default function Dashboard() {
         </div>
 
         {showSkeleton ? (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              {[...Array(4)].map((_, i) => <div key={i} className="h-32 bg-white/3 rounded-2xl animate-pulse" />)}
-            </div>
-            <div className="h-64 bg-white/3 rounded-2xl animate-pulse" />
-          </div>
+          <DashboardBodySkeleton />
         ) : (
           <div className="space-y-6">
             <StatsCards stats={stats} />

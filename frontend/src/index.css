@@ -20,6 +20,30 @@
 }
 
 @layer components {
+  /* Skeleton placeholder: a soft block with a light sweep across it.
+     (the old skeletons used bg-white/3, which isn't a Tailwind 3 opacity step, so it
+     produced no CSS and the old skeletons were invisible.) */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-radius: 0.75rem;
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+    animation: skeleton-sweep 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-sweep {
+    100% { transform: translateX(100%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton::after { animation: none; }
+  }
+
   /* Glassmorphism card */
   .card-glass {
     @apply bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)];

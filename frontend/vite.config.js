@@ -5,9 +5,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    // Keys starting with ^ are regexes. Plain '/api' also matched the
+    // /apis page, so refreshing it in dev was sent to the backend.
     proxy: {
-      '/auth': { target: 'http://localhost:5000', changeOrigin: true },
-      '/api':  { target: 'http://localhost:5000', changeOrigin: true },
+      '^/auth/': { target: 'http://localhost:5000', changeOrigin: true },
+      '^/api/':  { target: 'http://localhost:5000', changeOrigin: true },
     },
   },
   build: {

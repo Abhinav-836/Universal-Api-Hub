@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Navbar from './components/ui/Navbar';
 import Home from './pages/Home';
@@ -7,13 +7,13 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import ApiSelection from './pages/ApiSelection';
+import { AppLoadingSkeleton } from './components/ui/Skeleton';
 
+// Shown while a saved session is checked. A skeleton of the page the user
+// is about to land on, instead of a lone spinner.
 function Loading() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-surface-950">
-      <div className="w-8 h-8 border-2 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
-    </div>
-  );
+  const { pathname } = useLocation();
+  return <AppLoadingSkeleton page={pathname.startsWith('/apis') ? 'apis' : 'dashboard'} />;
 }
 
 function PrivateRoute({ children }) {

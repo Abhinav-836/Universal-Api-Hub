@@ -81,14 +81,14 @@ export default function ApiKeyManager({ apis = [], onToast, onKeyCreated }) {
 
       {loading ? (
         <div className="space-y-3">
-          {[1, 2].map((i) => <div key={i} className="h-12 bg-white/3 rounded-xl animate-pulse" />)}
+          {[1, 2].map((i) => <div key={i} aria-hidden="true" className="skeleton h-12 rounded-xl" />)}
         </div>
       ) : keys.length === 0 ? (
         <p className="text-slate-500 text-xs text-center py-6">No keys yet — create one above.</p>
       ) : (
         <div className="space-y-2">
           {keys.map((k) => (
-            <div key={k.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/3 border border-white/5 hover:border-white/10 transition-all group">
+            <div key={k.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all group">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-xs font-medium text-white truncate">{k.label}</span>

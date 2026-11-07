@@ -74,7 +74,7 @@ export default function ApiCard({ api, selected, accessible, locked, onSelect, o
             {loading ? 'Removing…' : 'Remove Access'}
           </button>
         ) : atLimit ? (
-          <div className="w-full py-2 rounded-xl text-xs font-semibold text-center text-slate-600 bg-white/3 border border-white/5">
+          <div className="w-full py-2 rounded-xl text-xs font-semibold text-center text-slate-600 bg-white/[0.03] border border-white/5">
             Slot limit reached
           </div>
         ) : (

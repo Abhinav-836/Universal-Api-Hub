@@ -31,7 +31,7 @@ export default function Navbar() {
   return (
     <nav className={`sticky top-0 z-50 border-b transition-all duration-300 ${
       scrolled
-        ? 'border-white/8 bg-surface-950/90 backdrop-blur-xl shadow-lg shadow-black/20'
+        ? 'border-white/[0.08] bg-surface-950/90 backdrop-blur-xl shadow-lg shadow-black/20'
         : 'border-white/5 bg-surface-950/70 backdrop-blur-md'
     }`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
