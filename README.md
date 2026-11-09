@@ -124,6 +124,9 @@ Crypto (Coinbase), forex (Frankfurter) and Yahoo Finance need no key, so market 
 | `PRICE_PRO_INR`, `PRICE_PREMIUM_INR` | | Price for 30 days, in rupees. Default 199 and 499 |
 | `AI_USD_INR`, `AI_MARGIN` | | AI credits: each paid AI call costs OpenRouter's `usage.cost` (USD) × `AI_USD_INR` (default 90) × `AI_MARGIN` (default 1.25), in paise. Keep OpenRouter's auto top-up on |
 | `WALLET_MIN_INR` | | Credit needed before paid AI models switch on (default 2). Below it, AI endpoints use the free models |
+| `OLLAMA_API_KEY` | | Turns on Ollama Cloud as a backup when every OpenRouter model fails. Pay-per-token: paying customers' backup calls are charged to their wallet at Ollama's prices |
+| `OLLAMA_MODELS`, `OLLAMA_VISION_MODELS` | | Backup models, in order. Defaults `gpt-oss:120b,mimo-v2.6-flash,gemma4:31b` and `gemma4:31b,mimo-v2.6-flash` |
+| `OLLAMA_FREE_DAILY_USD` | | Most your Ollama account spends per day on non-paying users' backup calls (default 0.25) |
 | `NEWS_PROVIDER` | | `gdelt` (default: free, open data, any use) or `newsapi` (only with a paid NewsAPI plan; the free plan isn't allowed in production) |
 | `OPENROUTER_MODEL_VISION_FREE` | | Vision model for users without paid time (e.g. a `:free` model). Empty = image analysis needs a paid plan |
 | `GOOGLE_CLIENT_ID` | optional | Turns on "Continue with Google". OAuth client ID (type *Web application*) from Google Cloud Console, with the frontend URL under *Authorized JavaScript origins*. The frontend reads it from `GET /auth/config`, so nothing is needed on Vercel |

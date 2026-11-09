@@ -13,6 +13,7 @@
 // so each user's history adds up exactly.
 const db = require('../config/db');
 const logger = require('../utils/logger');
+const { currentBilling } = require('../utils/billingContext');
 
 const num = (v, fallback) => {
   const n = Number(v);
@@ -39,13 +40,18 @@ async function balance(userId) {
  * the wallet; with too little, everyone gets the free models (plan 'free').
  */
 async function aiPlanFor(user) {
-  if (!user?.id || !user.plan || user.plan === 'free') return 'free';
-  try {
-    return (await balance(user.id)) >= minBalancePaise() ? user.plan : 'free';
-  } catch (err) {
-    logger.warn('Wallet balance check failed, using free models', { error: err.message });
-    return 'free';
+  let plan = 'free';
+  if (user?.id && user.plan && user.plan !== 'free') {
+    try {
+      plan = (await balance(user.id)) >= minBalancePaise() ? user.plan : 'free';
+    } catch (err) {
+      logger.warn('Wallet balance check failed, using free models', { error: err.message });
+    }
   }
+  // Remember it for this request: the Ollama backup charges only paying calls.
+  const ctx = currentBilling();
+  if (ctx) ctx.aiPlan = plan;
+  return plan;
 }
 
 /** Add credits (top-up or refund). Pass a transaction client to join an outer transaction. */

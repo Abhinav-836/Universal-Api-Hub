@@ -2,6 +2,7 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 const { currentBilling } = require('../utils/billingContext');
+const Ollama = require('./ollama.service');
 
 const getBaseUrl = () =>
   (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
@@ -94,40 +95,44 @@ function parseJsonReply(text) {
 }
 
 const LlmService = {
-  /** True when a real OpenRouter key is configured (otherwise endpoints run in demo mode). */
-  isConfigured: () => hasRealKey(getApiKey()),
+  /** True when OpenRouter or the Ollama backup is configured (otherwise endpoints run in demo mode). */
+  isConfigured: () => hasRealKey(getApiKey()) || Ollama.isConfigured(),
 
   /**
-   * Send a list of chat messages, trying each model in order.
-   * Moves to the next model on 400/404 (bad or retired model id); any other
-   * failure is a 503 straight away. If every model rejected the request, the
-   * error has code 'ALL_MODELS_REJECTED' so callers can tell "the input was
-   * unreadable" apart from "the provider is down".
+   * Send a list of chat messages, trying each OpenRouter model in order, then
+   * the Ollama backup. Any failure (retired model, rate limit, empty balance,
+   * outage) moves on to the next model. If nothing answers: 503, with code
+   * 'ALL_MODELS_REJECTED' when every model refused the input itself (400/404)
+   * so callers can tell "unreadable input" apart from "provider down".
+   *
+   * Paid calls are charged to the caller's wallet (wallet.service.js).
    */
   complete: async ({ messages, models, temperature = 0.2, maxTokens = 500, logContext = {} }) => {
-    if (!hasRealKey(getApiKey())) {
-      const err = new Error('OpenRouter is not configured');
+    const billing = currentBilling();
+    const charge = async (costUsd, model) => {
+      if (!billing?.userId || !(costUsd > 0)) return;
+      const Wallet = require('./wallet.service');
+      billing.chargedPaise += await Wallet.chargeAiCall({
+        userId: billing.userId, costUsd, model, endpoint: billing.endpoint,
+      });
+    };
+
+    if (!hasRealKey(getApiKey()) && !Ollama.isConfigured()) {
+      const err = new Error('No AI provider is configured');
       err.statusCode = 503;
       err.code = 'NOT_CONFIGURED';
       throw err;
     }
 
     let rejected = 0;
-    for (const model of models) {
+    const tried = hasRealKey(getApiKey()) ? models : [];
+    for (const model of tried) {
       try {
         const data = await callOpenRouter({ model, messages, temperature, maxTokens });
         const choice = data.choices?.[0];
         if (!choice?.message) throw unavailable();
-        // Paid models: charge the caller's wallet what OpenRouter charged us
-        // (usage.cost, always present) — see wallet.service.js.
-        const billing = currentBilling();
-        const costUsd = Number(data.usage?.cost || 0);
-        if (billing?.userId && costUsd > 0) {
-          const Wallet = require('./wallet.service');
-          billing.chargedPaise += await Wallet.chargeAiCall({
-            userId: billing.userId, costUsd, model: data.model || model, endpoint: billing.endpoint,
-          });
-        }
+        // usage.cost is what OpenRouter charged us (0 for free models).
+        await charge(Number(data.usage?.cost || 0), data.model || model);
         return {
           source: 'openrouter',
           reply: choice.message.content || '',
@@ -143,15 +148,28 @@ const LlmService = {
           status: err.response?.status,
           data: err.response?.data,
         });
-        if (isModelError(err)) {
-          rejected += 1;
-          continue;
-        }
-        throw unavailable();
+        if (isModelError(err)) rejected += 1;
+        // Try the next model: a different one may not be rate-limited,
+        // may be free when the balance is empty, or may still exist.
       }
     }
 
-    throw unavailable(rejected === models.length ? 'ALL_MODELS_REJECTED' : undefined);
+    // Backup: Ollama Cloud. Paying customers' calls are charged to their
+    // wallet; other calls come out of the owner's small daily budget.
+    const paying = !!billing?.aiPlan && billing.aiPlan !== 'free';
+    const backup = await Ollama.complete({ messages, temperature, maxTokens, paying, logContext });
+    if (backup) {
+      if (paying) await charge(backup.costUsd, backup.model);
+      return {
+        source: 'ollama',
+        reply: backup.reply,
+        model: backup.model,
+        usage: backup.usage,
+        finishReason: backup.finishReason,
+      };
+    }
+
+    throw unavailable(tried.length && rejected === tried.length ? 'ALL_MODELS_REJECTED' : undefined);
   },
 
   /**
