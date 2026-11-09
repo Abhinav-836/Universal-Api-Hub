@@ -14,12 +14,18 @@ const ALPHA_VANTAGE_BASE    = 'https://www.alphavantage.co/query';
 const FINNHUB_BASE          = 'https://finnhub.io/api/v1';
 const FRANKFURTER_BASE      = 'https://api.frankfurter.dev/v1';   // ECB rates, no key
 const COINBASE_BASE         = 'https://api.coinbase.com/v2';      // crypto spot, no key
+const YAHOO_HTTP_BASE       = 'https://query1.finance.yahoo.com';  // public chart/search JSON, no key
+// Yahoo answers plain HTTP clients with 429s; a normal browser User-Agent gets real data.
+const YAHOO_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  Accept: 'application/json',
+};
 const HTTP_TIMEOUT_MS       = 8000;
 
 if (!FINNHUB_API_KEY) {
   // FIX: a missing key used to be skipped silently, which hid the fact that
   // stock quotes were relying on Alpha Vantage's 25/day free quota.
-  logger.warn('FINNHUB_API_KEY is not set — stock quotes/search will fall back to Alpha Vantage (25 req/day) and Yahoo');
+  logger.warn('FINNHUB_API_KEY is not set — stock quotes/search use Yahoo\'s public chart/search endpoints, then Alpha Vantage (25 req/day)');
 }
 
 // A provider returns:
@@ -301,7 +307,79 @@ async function yahooSearch(keywords) {
   }
 }
 
+// ── Yahoo's public chart and search JSON (no key, no cookie) ──
+// The yahoo-finance2 library's quote() needs a cookie + "crumb" handshake
+// that Yahoo refuses from cloud hosts like Render, so with no Finnhub key
+// every stock quote ended in a 503. The plain chart endpoint has no
+// handshake and works from servers.
+async function yahooChartMeta(symbol) {
+  try {
+    const { data } = await axios.get(`${YAHOO_HTTP_BASE}/v8/finance/chart/${encodeURIComponent(symbol)}`, {
+      params: { range: '1d', interval: '1d' },
+      headers: YAHOO_HEADERS,
+      timeout: HTTP_TIMEOUT_MS,
+    });
+    const meta = data?.chart?.result?.[0]?.meta;
+    if (!meta || meta.regularMarketPrice == null) return NOT_FOUND;
+    return meta;
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 404 || err.response?.data?.chart?.error?.code === 'Not Found') return NOT_FOUND;
+    logger.warn('Yahoo chart request failed', { symbol, status, error: err.message });
+    return null;
+  }
+}
+
+async function yahooChartQuote(symbol) {
+  const m = await yahooChartMeta(symbol);
+  if (!m || m === NOT_FOUND) return m;
+  const prev = m.chartPreviousClose ?? m.previousClose ?? null;
+  const change = prev ? m.regularMarketPrice - prev : null;
+  return {
+    symbol: m.symbol || symbol,
+    open: null, // the chart summary has no opening price
+    high: m.regularMarketDayHigh ?? null,
+    low: m.regularMarketDayLow ?? null,
+    price: m.regularMarketPrice,
+    volume: m.regularMarketVolume ?? null,
+    latestTradingDay: yahooTime(m.regularMarketTime).slice(0, 10),
+    previousClose: prev,
+    change: change == null ? null : Number(change.toFixed(4)),
+    changePercent: prev ? `${((change / prev) * 100).toFixed(2)}%` : '0.00%',
+    source: 'yahoo',
+  };
+}
+
+async function yahooHttpSearch(keywords) {
+  try {
+    const { data } = await axios.get(`${YAHOO_HTTP_BASE}/v1/finance/search`, {
+      params: { q: keywords, quotesCount: 10, newsCount: 0 },
+      headers: YAHOO_HEADERS,
+      timeout: HTTP_TIMEOUT_MS,
+    });
+    return (data?.quotes || [])
+      .filter((q) => q.symbol && (q.quoteType === 'EQUITY' || q.quoteType === 'ETF'))
+      .slice(0, 10)
+      .map((q) => ({
+        symbol: q.symbol,
+        name: q.shortname || q.longname || q.symbol,
+        type: q.quoteType === 'ETF' ? 'ETF' : 'Equity',
+        region: q.exchDisp || q.exchange || null,
+        currency: null,
+        source: 'yahoo',
+      }));
+  } catch (err) {
+    logger.warn('Yahoo search request failed', { keywords, status: err.response?.status, error: err.message });
+    return null;
+  }
+}
+
 async function yahooRate(ySymbol) {
+  // Chart endpoint first (works from servers), then the library as before.
+  const m = await yahooChartMeta(ySymbol);
+  if (m && m !== NOT_FOUND) {
+    return { rate: m.regularMarketPrice, lastRefreshed: yahooTime(m.regularMarketTime), bid: null, ask: null, source: 'yahoo' };
+  }
   const q = await yahooQuoteRaw(ySymbol, 'Yahoo rate');
   if (!q || q === NOT_FOUND) return q;
   return {
@@ -361,7 +439,7 @@ async function cached(cacheKey, ttl, producer) {
 // FIX: provider order. Alpha Vantage (25/day) used to be tried FIRST for
 // everything, so it was exhausted almost immediately and every later call
 // paid an extra round-trip to it. Now:
-//   stocks: Finnhub (60/min) → Alpha Vantage → Yahoo
+//   stocks: Finnhub (60/min) → Yahoo chart/search (no key) → Alpha Vantage → Yahoo library
 //   forex:  Alpha Vantage (live) → Frankfurter (ECB daily) → Yahoo
 //   crypto: Coinbase (live)      → Alpha Vantage → Yahoo
 // ============================================================
@@ -371,6 +449,7 @@ const MarketService = {
     return cached(`market:quote:${sym}`, TTL.ONE_MINUTE, () =>
       runProviders([
         { name: 'finnhub',       fn: () => finnhubQuote(sym) },
+        { name: 'yahoo_chart',   fn: () => yahooChartQuote(sym) },
         { name: 'alpha_vantage', fn: () => alphaVantageQuote(sym) },
         { name: 'yahoo',         fn: () => yahooQuote(sym) },
       ], { notFoundMessage: `Symbol "${sym}" not found` })
@@ -382,6 +461,7 @@ const MarketService = {
     return cached(`market:search:${kw.toLowerCase()}`, TTL.FIVE_MINUTES, () =>
       runProviders([
         { name: 'finnhub',       fn: () => finnhubSearch(kw) },
+        { name: 'yahoo_search',  fn: () => yahooHttpSearch(kw) },
         { name: 'alpha_vantage', fn: () => alphaVantageSearch(kw) },
         { name: 'yahoo',         fn: () => yahooSearch(kw) },
       ], { notFoundMessage: 'No matching symbols', emptyIsResult: true })
@@ -424,3 +504,4 @@ const MarketService = {
 };
 
 module.exports = MarketService;
+module.exports._internals = { yahooChartQuote, yahooHttpSearch, NOT_FOUND };
