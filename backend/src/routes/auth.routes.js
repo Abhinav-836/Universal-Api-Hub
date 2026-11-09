@@ -53,6 +53,16 @@ router.post('/login',
   AuthController.login
 );
 
+router.get('/config', AuthController.config);
+
+router.post('/google',
+  [
+    authLimiter,
+    body('credential').isString().isLength({ min: 20, max: 4096 }).withMessage('Missing Google credential'),
+  ],
+  AuthController.google
+);
+
 router.get('/me', meLimiter, jwtAuth, AuthController.me);
 
 router.post('/logout', AuthController.logout);
@@ -66,7 +76,9 @@ router.post('/change-password',
   [
     authLimiter,
     jwtAuth,
-    body('currentPassword').notEmpty().withMessage('Current password is required'),
+    // Optional only for accounts made with Google that have no password yet;
+    // the service still requires it for everyone else.
+    body('currentPassword').optional().isString(),
     body('newPassword').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
       .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/).withMessage('Password must contain uppercase, lowercase, and number'),
   ],

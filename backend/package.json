@@ -31,6 +31,7 @@
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.22.0",
     "stripe": "^22.1.1",
+    "validator": "^13.15.23",
     "winston": "^3.12.0",
     "winston-daily-rotate-file": "^4.7.1",
     "yahoo-finance2": "^4.0.5"

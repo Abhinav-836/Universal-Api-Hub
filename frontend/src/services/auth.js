@@ -18,6 +18,14 @@ export const authService = {
     return response.data;
   },
 
+  google: async (credential) => {
+    const response = await api.post('/auth/google', { credential });
+    if (response.data.token) {
+      localStorage.setItem('auth_token', response.data.token);
+    }
+    return response.data;
+  },
+
   logout: async () => {
     try {
       await api.post('/auth/logout');

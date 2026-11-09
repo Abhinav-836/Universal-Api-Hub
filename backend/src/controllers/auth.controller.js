@@ -4,7 +4,44 @@ const AuthService = require('../services/auth.service');
 const UserModel   = require('../models/user.model');
 const logger = require('../utils/logger');
 
+const setAuthCookie = (res, token) => {
+  // Only force secure/none in production, otherwise dev cookies get dropped by browser
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.cookie('jwt', token, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/',
+  });
+};
+
 const AuthController = {
+  /** Public settings the sign-in pages need. */
+  config: (req, res) => {
+    res.json({ success: true, googleClientId: process.env.GOOGLE_CLIENT_ID || null });
+  },
+
+  google: async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+    try {
+      const result = await AuthService.googleLogin({ credential: req.body.credential });
+      setAuthCookie(res, result.token);
+      res.status(result.created ? 201 : 200).json({
+        success: true,
+        created: result.created,
+        user: result.user,
+        token: result.token,
+      });
+    } catch (err) {
+      logger.error('Google sign-in error', { error: err.message });
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  },
+
   register: async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -124,11 +161,8 @@ const AuthController = {
     }
     try {
       const { currentPassword, newPassword } = req.body;
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({
-          success: false,
-          error: 'Current password and new password are required'
-        });
+      if (!newPassword) {
+        return res.status(400).json({ success: false, error: 'New password is required' });
       }
       await AuthService.changePassword({
         userId: req.user.id,

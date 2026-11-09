@@ -3,9 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Zap, Eye, EyeOff, AlertCircle, ArrowRight } from 'lucide-react';
 import ThreeBackground from '../components/ThreeBackground';
+import GoogleButton from '../components/GoogleButton';
 
 export default function Login() {
-  const { login, authAttempts, authError } = useAuth();
+  const { login, loginWithGoogle, authAttempts, authError } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
@@ -40,6 +41,8 @@ export default function Login() {
 
       if (lower.includes('too many')) {
         setError('⏳ Too many login attempts. Please wait 15 minutes.');
+      } else if (lower.includes('google')) {
+        setError(msg);
       } else if (lower.includes('invalid') || lower.includes('credentials')) {
         setError('❌ Invalid email or password.');
       } else if (lower.includes('network')) {
@@ -47,6 +50,19 @@ export default function Login() {
       } else {
         setError(msg);
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogle = async (credential) => {
+    setError('');
+    setLoading(true);
+    try {
+      await loginWithGoogle(credential);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -92,6 +108,8 @@ export default function Login() {
               <span className="flex-1">{error}</span>
             </div>
           )}
+
+          <GoogleButton text="continue_with" onCredential={handleGoogle} disabled={loading} />
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>

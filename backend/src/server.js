@@ -31,6 +31,13 @@ const start = async () => {
 
   if (!dbOk) {
     logger.warn('PostgreSQL not available — DB-dependent features will fail');
+  } else {
+    // Google sign-in needs users.google_sub (migration 008); add it if missing.
+    try {
+      await require('./models/user.model').ensureGoogleColumn();
+    } catch (err) {
+      logger.warn('Could not add users.google_sub — Google sign-in will fail', { error: err.message });
+    }
   }
   if (!redisOk) {
     logger.warn('Redis not available — rate limiting and caching will be degraded');

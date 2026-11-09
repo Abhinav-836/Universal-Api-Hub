@@ -105,7 +105,9 @@ export const AuthProvider = ({ children }) => {
         friendlyMessage = 'Too many login attempts. Please wait a moment.';
         setAuthAttempts((prev) => prev + 1);
       } else if (err.response?.status === 401) {
-        friendlyMessage = 'Invalid email or password';
+        // Keep the server's hint for accounts that sign in with Google.
+        const serverMsg = err.response?.data?.error;
+        friendlyMessage = serverMsg && serverMsg.includes('Google') ? serverMsg : 'Invalid email or password';
       } else if (err.code === 'ERR_NETWORK') {
         friendlyMessage = 'Network error. Please check your connection.';
       } else {
@@ -119,6 +121,30 @@ export const AuthProvider = ({ children }) => {
       const enhanced = new Error(friendlyMessage);
       enhanced.response = err.response;
       enhanced.code = err.code;
+      enhanced.status = err.response?.status;
+      throw enhanced;
+    }
+  }, []);
+
+  const loginWithGoogle = useCallback(async (credential) => {
+    setAuthError(null);
+    try {
+      const data = await authService.google(credential);
+      if (data?.success && data?.user) {
+        setUser(data.user);
+        setAuthAttempts(0);
+        return data;
+      }
+      throw new Error(data?.error || 'Google sign-in failed');
+    } catch (err) {
+      const friendlyMessage =
+        err.response?.status === 429
+          ? 'Too many attempts. Please wait a moment.'
+          : err.code === 'ERR_NETWORK'
+            ? 'Network error. Please check your connection.'
+            : err.response?.data?.error || err.message || 'Google sign-in failed';
+      const enhanced = new Error(friendlyMessage);
+      enhanced.response = err.response;
       enhanced.status = err.response?.status;
       throw enhanced;
     }
@@ -173,6 +199,7 @@ export const AuthProvider = ({ children }) => {
     user,
     loading,
     login,
+    loginWithGoogle,
     register,
     logout,
     updateUser,

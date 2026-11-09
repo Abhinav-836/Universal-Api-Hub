@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Zap, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
 import ThreeBackground from '../components/ThreeBackground';
+import GoogleButton from '../components/GoogleButton';
 
 const PW_CHECKS = [
   { label: 'At least 8 characters', test: (v) => v.length >= 8 },
@@ -12,7 +13,7 @@ const PW_CHECKS = [
 ];
 
 export default function Signup() {
-  const { register, login } = useAuth();
+  const { register, login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const [form, setForm]       = useState({ email: '', username: '', password: '' });
   const [error, setError]     = useState('');
@@ -38,6 +39,17 @@ export default function Signup() {
     } finally { setLoading(false); }
   };
 
+  const handleGoogle = async (credential) => {
+    setError('');
+    setLoading(true);
+    try {
+      await loginWithGoogle(credential);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Google sign-up failed.');
+    } finally { setLoading(false); }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 py-12 relative">
       <ThreeBackground />
@@ -56,6 +68,8 @@ export default function Signup() {
               <AlertCircle size={15} className="shrink-0" />{error}
             </div>
           )}
+
+          <GoogleButton text="signup_with" onCredential={handleGoogle} disabled={loading} />
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>

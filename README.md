@@ -120,6 +120,7 @@ Crypto (Coinbase), forex (Frankfurter) and Yahoo Finance need no key, so market 
 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | | Rate limiting and caching |
 | `FRONTEND_URL` | | Allowed CORS origin |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_PRO`, `STRIPE_PRICE_ID_PREMIUM` | in production | Stripe webhook endpoint: `POST /webhook/stripe` |
+| `GOOGLE_CLIENT_ID` | optional | Turns on "Continue with Google". OAuth client ID (type *Web application*) from Google Cloud Console, with the frontend URL under *Authorized JavaScript origins*. The frontend reads it from `GET /auth/config`, so nothing is needed on Vercel |
 | `BETA_FREE_UPGRADES` | | `true` (default) lets users change plan without paying |
 | `OPENROUTER_MODEL_FREE` / `_PRO` / `_ALL` | | Comma-separated model IDs per plan, tried in order (also used by translate, sentiment and summarize) |
 | `OPENROUTER_MODEL_VISION` | | Comma-separated vision-capable models for image analysis. Default `openai/gpt-4o-mini` |

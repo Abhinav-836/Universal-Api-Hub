@@ -1,7 +1,62 @@
 // backend/src/models/user.model.js
 const db = require('../config/db');
 
+// Stored instead of an argon2 hash for accounts without a password. Never matches.
+const NO_PASSWORD = '!google';
+
 const UserModel = {
+  NO_PASSWORD,
+
+  /**
+   * Adds users.google_sub if it's missing (same as migration 008). Run at
+   * startup because the host doesn't run migrations on deploy. Idempotent.
+   */
+  ensureGoogleColumn: async () => {
+    await db.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub VARCHAR(255)');
+    await db.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)');
+  },
+
+  /** For Google sign-in: includes disabled accounts, so they can be refused clearly. */
+  findForGoogle: async ({ googleSub, email }) => {
+    const bySub = await db.query(
+      'SELECT id, email, username, plan, password_hash, google_sub, is_active FROM users WHERE google_sub = $1',
+      [googleSub]
+    );
+    if (bySub.rows[0]) return bySub.rows[0];
+    const byEmail = await db.query(
+      'SELECT id, email, username, plan, password_hash, google_sub, is_active FROM users WHERE email = $1',
+      [email.toLowerCase()]
+    );
+    return byEmail.rows[0] || null;
+  },
+
+  usernameTaken: async (username) => {
+    const result = await db.query('SELECT 1 FROM users WHERE username = $1', [username.toLowerCase()]);
+    return result.rows.length > 0;
+  },
+
+  createGoogle: async ({ email, username, googleSub }) => {
+    const result = await db.query(
+      `INSERT INTO users (email, username, password_hash, google_sub)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, email, username, plan, created_at`,
+      [email.toLowerCase(), username.toLowerCase(), NO_PASSWORD, googleSub]
+    );
+    return result.rows[0];
+  },
+
+  /**
+   * Link an existing account to Google. Emails were never verified on this
+   * site, so a password already on the account may have been set by someone
+   * who registered this address before its real owner: it stops working.
+   */
+  linkGoogle: async (userId, googleSub) => {
+    await db.query(
+      'UPDATE users SET google_sub = $1, password_hash = $2, updated_at = NOW() WHERE id = $3',
+      [googleSub, NO_PASSWORD, userId]
+    );
+  },
+
   findByEmail: async (email) => {
     const result = await db.query(
       `SELECT id, email, username, plan, password_hash,

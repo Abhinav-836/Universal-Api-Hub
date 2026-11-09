@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
     stripe_subscription_id VARCHAR(255),
     stripe_price_id VARCHAR(255),
     billing_status  VARCHAR(50),
+    google_sub      VARCHAR(255) UNIQUE,   -- set once the person uses Google sign-in
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
