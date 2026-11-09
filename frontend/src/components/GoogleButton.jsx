@@ -5,6 +5,7 @@
 // onCredential posts it to the backend, which checks it. The client ID comes
 // from the backend (/auth/config), so only the backend needs GOOGLE_CLIENT_ID.
 import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../services/api';
 
 const SCRIPT_SRC = 'https://accounts.google.com/gsi/client';
@@ -96,6 +97,11 @@ export default function GoogleButton({ text = 'continue_with', onCredential, dis
           <div ref={box} className="flex w-full justify-center min-h-[44px]" />
         </div>
       )}
+      <p className="mt-3 text-center text-xs text-slate-500">
+        By continuing you agree to the{' '}
+        <Link to="/terms" className="underline underline-offset-2 hover:text-slate-300">Terms</Link> and{' '}
+        <Link to="/privacy" className="underline underline-offset-2 hover:text-slate-300">Privacy policy</Link>.
+      </p>
       <div className="mt-6 flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-500" aria-hidden="true">
         <span className="h-px flex-1 bg-white/10" />
         or with email

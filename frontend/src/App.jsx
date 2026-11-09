@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import ApiSelection from './pages/ApiSelection';
+import { Privacy, Terms } from './pages/Legal';
 import { AppLoadingSkeleton } from './components/ui/Skeleton';
 
 // Shown while a saved session is checked. A skeleton of the page the user
@@ -40,6 +41,9 @@ function AppShell() {
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
         <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
         <Route path="/apis" element={<PrivateRoute><ApiSelection /></PrivateRoute>} />
+        {/* Public for everyone, signed in or not: Google's consent screen links here. */}
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/terms" element={<Terms />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
