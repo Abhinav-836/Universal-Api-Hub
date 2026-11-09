@@ -4,6 +4,11 @@ jest.mock('axios');
 jest.mock('../src/services/usage.service', () => ({ log: jest.fn().mockResolvedValue() }));
 jest.mock('../src/services/rateLimit.service', () => ({ refund: jest.fn().mockResolvedValue() }));
 jest.mock('../src/utils/logger', () => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn() }));
+jest.mock('../src/services/wallet.service', () => ({
+  // These tests are about the providers, not the wallet: the user has credit.
+  aiPlanFor: async (user) => user?.plan || 'free',
+  chargeAiCall: async () => 0,
+}));
 
 const axios = require('axios');
 const UsageService = require('../src/services/usage.service');
@@ -29,7 +34,7 @@ function fakeRes() {
 }
 
 async function call(handler, { body = {}, query = {}, plan = 'pro', costWeight = 2 } = {}) {
-  const req = { body, query, user: { id: 'u1', plan }, costWeight, originalUrl: '/api/v1/test', method: 'POST', get: () => 'jest' };
+  const req = { body, query, user: { id: 'u1', plan, plan_expires_at: new Date(Date.now() + 86400000).toISOString() }, costWeight, originalUrl: '/api/v1/test', method: 'POST', get: () => 'jest' };
   const res = fakeRes();
   await handler(req, res);
   return res;

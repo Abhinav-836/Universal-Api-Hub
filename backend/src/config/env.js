@@ -20,15 +20,8 @@ const validateEnv = () => {
     missing.push('DATABASE_URL (or DB_HOST)');
   }
 
-  // Require Stripe only in production
-  if (process.env.NODE_ENV === 'production') {
-    const stripeEnvs = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_ID_PRO', 'STRIPE_PRICE_ID_PREMIUM'];
-    for (const env of stripeEnvs) {
-      if (!process.env[env]) {
-        missing.push(env);
-      }
-    }
-  }
+  // Payments (Razorpay) are optional: without RAZORPAY_KEY_ID /
+  // RAZORPAY_KEY_SECRET the server runs and paid upgrades are switched off.
 
   if (missing.length > 0) {
     const msg = `FATAL: Missing required environment variables: ${missing.join(', ')}`;

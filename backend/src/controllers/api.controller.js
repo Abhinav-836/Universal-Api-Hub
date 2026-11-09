@@ -1,5 +1,6 @@
 // backend/src/controllers/api.controller.js
 const { validationResult } = require('express-validator');
+const Wallet = require('../services/wallet.service');
 const ApiKeyService = require('../services/apiKey.service');
 const LlmService = require('../services/llm.service');
 const AiTools = require('../services/aiTools.service');
@@ -105,7 +106,7 @@ const chatHandler = withUsageLog(async (req, res) => {
     system,
     temperature: 0.7,
     maxTokens: 500,
-    plan: req.user?.plan || 'free',
+    plan: await Wallet.aiPlanFor(req.user),
   });
 
   if (result.source === 'mock') markMock(res);
@@ -192,7 +193,9 @@ const weatherHandler = withUsageLog(async (req, res) => {
 // they return clearly labelled demo data and cost 0 quota (markMock →
 // refund). Provider failures are 503s, also refunded.
 // ============================================================
-const userPlan = (req) => req.user?.plan || 'free';
+// Which plan's AI models to use: paid models only while the user's wallet
+// has credit (wallet.service.js) — each paid call is charged to it.
+const userPlan = (req) => Wallet.aiPlanFor(req.user);
 
 const imageAnalyzeHandler = withUsageLog(async (req, res) => {
   const { imageUrl, imageBase64 } = req.body;
@@ -201,7 +204,7 @@ const imageAnalyzeHandler = withUsageLog(async (req, res) => {
   }
 
   if (LlmService.isConfigured()) {
-    const result = await AiTools.analyzeImage({ imageUrl, imageBase64, plan: userPlan(req) });
+    const result = await AiTools.analyzeImage({ imageUrl, imageBase64, plan: await userPlan(req) });
     return res.json({ success: true, source: 'openrouter', ...result });
   }
 
@@ -226,7 +229,7 @@ const translateHandler = withUsageLog(async (req, res) => {
   const { text, targetLanguage, sourceLanguage = 'auto' } = req.body;
 
   if (LlmService.isConfigured()) {
-    const result = await AiTools.translate({ text, targetLanguage, sourceLanguage, plan: userPlan(req) });
+    const result = await AiTools.translate({ text, targetLanguage, sourceLanguage, plan: await userPlan(req) });
     return res.json({ success: true, source: 'openrouter', ...result });
   }
 
@@ -249,7 +252,7 @@ const sentimentHandler = withUsageLog(async (req, res) => {
   const { text } = req.body;
 
   if (LlmService.isConfigured()) {
-    const result = await AiTools.sentiment({ text, plan: userPlan(req) });
+    const result = await AiTools.sentiment({ text, plan: await userPlan(req) });
     return res.json({ success: true, source: 'openrouter', ...result });
   }
 
@@ -283,7 +286,7 @@ const summarizeHandler = withUsageLog(async (req, res) => {
   const maxLength = parseInt(req.body.maxLength, 10) || 150;
 
   if (LlmService.isConfigured()) {
-    const result = await AiTools.summarize({ text, maxLength, style, plan: userPlan(req) });
+    const result = await AiTools.summarize({ text, maxLength, style, plan: await userPlan(req) });
     return res.json({ success: true, source: 'openrouter', ...result });
   }
 

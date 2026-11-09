@@ -69,17 +69,31 @@ Returns all APIs with `selected`, `accessible`, `locked` flags.
 Remove an API from your selection.
 
 ### POST /api/user/checkout
-Creates a real Stripe Checkout Session for plan upgrades.
+Starts a Razorpay payment for 30 days of a plan. The price is set on the server.
 
-**Body:** `{ "plan": "pro" | "premium" | "free" }`
+**Body:** `{ "plan": "pro" | "premium" }`
 
 **Response 200:**
 ```json
-{ "success": true, "url": "https://checkout.stripe.com/..." }
+{ "success": true, "checkout": { "orderId": "order_…", "amount": 49900, "currency": "INR", "keyId": "rzp_live_…", "plan": "premium", "days": 30 } }
 ```
+The frontend opens Razorpay Checkout with this order.
 
-### POST /webhook/stripe
-Stripe webhook endpoint for subscription state synchronization. (Not for direct user calling).
+### POST /api/user/checkout/verify
+Called with what Checkout returns after a successful payment. The server checks the signature, then asks Razorpay that the payment is captured for this order and amount, then gives the plan.
+
+**Body:** `{ "orderId": "order_…", "paymentId": "pay_…", "signature": "<hex>" }`
+
+### GET /api/user/wallet
+Your AI credit balance (paise), the top-up limits, and the last 20 top-ups and AI charges.
+
+### POST /api/user/wallet/topup
+Starts a Razorpay payment that adds credits. **Body:** `{ "amountInr": 250 }` (whole rupees, 50–10,000). Confirm it with `POST /api/user/checkout/verify`, the same as plans.
+
+Paid AI calls on `/api/v1/*` report what they cost in the `X-Cost-INR` response header.
+
+### POST /webhook/razorpay
+Razorpay → server (`payment.captured`, `order.paid`), signed with `RAZORPAY_WEBHOOK_SECRET`. Not for direct calls.
 
 ---
 

@@ -13,6 +13,8 @@ export default defineConfig({
     },
   },
   build: {
+    // No source maps in production: visitors can't browse the original source.
+    sourcemap: false,
     // Split heavy vendor libraries into separate chunks so visitors
     // only download what each route actually needs.
     rollupOptions: {

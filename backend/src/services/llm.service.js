@@ -1,6 +1,7 @@
 // backend/src/services/llm.service.js
 const axios = require('axios');
 const logger = require('../utils/logger');
+const { currentBilling } = require('../utils/billingContext');
 
 const getBaseUrl = () =>
   (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
@@ -25,7 +26,12 @@ const getModelsForPlan = (plan = 'free') => {
 
 // Image analysis needs a model that accepts images. Same idea: comma-separated,
 // tried in order.
-const getVisionModels = () => splitModels(process.env.OPENROUTER_MODEL_VISION || 'openai/gpt-4o-mini');
+// Users without paid time get OPENROUTER_MODEL_VISION_FREE (e.g. a ":free"
+// vision model); if that isn't set, image analysis needs a paid plan.
+const getVisionModels = (plan = 'premium') =>
+  plan === 'free'
+    ? splitModels(process.env.OPENROUTER_MODEL_VISION_FREE || '')
+    : splitModels(process.env.OPENROUTER_MODEL_VISION || 'openai/gpt-4o-mini');
 
 const getPrimaryModel = (plan = 'free') => getModelsForPlan(plan)[0];
 
@@ -112,6 +118,16 @@ const LlmService = {
         const data = await callOpenRouter({ model, messages, temperature, maxTokens });
         const choice = data.choices?.[0];
         if (!choice?.message) throw unavailable();
+        // Paid models: charge the caller's wallet what OpenRouter charged us
+        // (usage.cost, always present) — see wallet.service.js.
+        const billing = currentBilling();
+        const costUsd = Number(data.usage?.cost || 0);
+        if (billing?.userId && costUsd > 0) {
+          const Wallet = require('./wallet.service');
+          billing.chargedPaise += await Wallet.chargeAiCall({
+            userId: billing.userId, costUsd, model: data.model || model, endpoint: billing.endpoint,
+          });
+        }
         return {
           source: 'openrouter',
           reply: choice.message.content || '',
@@ -186,7 +202,7 @@ const LlmService = {
   },
 
   getAvailableModels: (plan = 'free') => getModelsForPlan(plan),
-  getVisionModels: () => getVisionModels(),
+  getVisionModels: (plan) => getVisionModels(plan),
   getPrimaryModel: (plan = 'free') => getPrimaryModel(plan),
   parseJsonReply,
 };

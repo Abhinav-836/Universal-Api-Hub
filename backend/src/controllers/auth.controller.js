@@ -119,6 +119,7 @@ const AuthController = {
         email: user.email,
         username: user.username,
         plan: user.plan,
+        plan_expires_at: user.plan_expires_at || null,
         createdAt: user.created_at,
       };
       res.json({ success: true, user: userData });

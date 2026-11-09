@@ -8,7 +8,7 @@ One API key, many APIs. Sign up, pick a plan, choose which APIs you want, and ca
 |---|---|
 | **Frontend** | React 18, Vite, Tailwind CSS, Three.js — deployed on Vercel |
 | **Backend** | Node.js, Express, PostgreSQL, Redis — deployed on Render |
-| **Payments** | Stripe Checkout + webhooks |
+| **Payments** | Razorpay Checkout (orders) + webhooks |
 | **CI** | GitHub Actions: lint, dependency audit, backend + frontend tests, migration and seed checks against a real Postgres |
 
 ## How a request flows
@@ -55,7 +55,7 @@ Every API except market data returns labelled demo data (and charges no quota) w
 | API switches per day | 2 | 5 | unlimited |
 | LLM models | `OPENROUTER_MODEL_FREE` | `OPENROUTER_MODEL_PRO` | `OPENROUTER_MODEL_ALL` |
 
-A call costs its API's weight, so on Free you could make 10 weather calls or 3 AI chats a day. Upgrades go through Stripe Checkout. While `BETA_FREE_UPGRADES` is `true` (the default), plans can be switched without paying.
+A call costs its API's weight, so on Free you could make 10 weather calls or 3 AI chats a day. Paid plans are bought through Razorpay for 30 days at a time (no auto-renewal); when the time runs out the account moves back to Free. Paid AI models are paid from prepaid AI credits (a wallet topped up through Razorpay); each call is charged its OpenRouter cost plus a margin and shown in the `X-Cost-INR` header. Setting `BETA_FREE_UPGRADES=true` lets people switch plans without paying.
 
 ## Security
 
@@ -119,9 +119,15 @@ Crypto (Coinbase), forex (Frankfurter) and Yahoo Finance need no key, so market 
 | `DATABASE_URL` (or `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`) | yes | `DB_SSL` for hosted Postgres |
 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | | Rate limiting and caching |
 | `FRONTEND_URL` | | Allowed CORS origin |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_PRO`, `STRIPE_PRICE_ID_PREMIUM` | in production | Stripe webhook endpoint: `POST /webhook/stripe` |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | to take payments | From Razorpay Dashboard → Account & Settings → API Keys. Without them, paid upgrades are switched off |
+| `RAZORPAY_WEBHOOK_SECRET` | to take payments | Webhook URL `POST /webhook/razorpay`, events `payment.captured` and `order.paid`. Grants the plan even if the buyer closes the tab |
+| `PRICE_PRO_INR`, `PRICE_PREMIUM_INR` | | Price for 30 days, in rupees. Default 199 and 499 |
+| `AI_USD_INR`, `AI_MARGIN` | | AI credits: each paid AI call costs OpenRouter's `usage.cost` (USD) × `AI_USD_INR` (default 90) × `AI_MARGIN` (default 1.25), in paise. Keep OpenRouter's auto top-up on |
+| `WALLET_MIN_INR` | | Credit needed before paid AI models switch on (default 2). Below it, AI endpoints use the free models |
+| `NEWS_PROVIDER` | | `gdelt` (default: free, open data, any use) or `newsapi` (only with a paid NewsAPI plan; the free plan isn't allowed in production) |
+| `OPENROUTER_MODEL_VISION_FREE` | | Vision model for users without paid time (e.g. a `:free` model). Empty = image analysis needs a paid plan |
 | `GOOGLE_CLIENT_ID` | optional | Turns on "Continue with Google". OAuth client ID (type *Web application*) from Google Cloud Console, with the frontend URL under *Authorized JavaScript origins*. The frontend reads it from `GET /auth/config`, so nothing is needed on Vercel |
-| `BETA_FREE_UPGRADES` | | `true` (default) lets users change plan without paying |
+| `BETA_FREE_UPGRADES` | | `false` (default). `true` lets users change plan without paying |
 | `OPENROUTER_MODEL_FREE` / `_PRO` / `_ALL` | | Comma-separated model IDs per plan, tried in order (also used by translate, sentiment and summarize) |
 | `OPENROUTER_MODEL_VISION` | | Comma-separated vision-capable models for image analysis. Default `openai/gpt-4o-mini` |
 | `IP_RATE_LIMIT_MAX`, `IP_RATE_LIMIT_WINDOW_MS` | | Per-IP limit on `/api/v1` |
@@ -143,7 +149,7 @@ More detail in [docs/API.md](docs/API.md), [docs/ARCHITECTURE.md](docs/ARCHITECT
 ## Tests
 
 ```bash
-cd backend && npm test        # Jest: app, billing, Stripe
+cd backend && npm test        # Jest: app, billing (Razorpay), Google sign-in, market, security
 cd frontend && npm test       # Vitest
 ```
 

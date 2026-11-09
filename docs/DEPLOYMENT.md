@@ -4,7 +4,7 @@
 - Node.js >= 18
 - PostgreSQL 15+
 - Redis 7+
-- Stripe Account (for webhooks)
+- Razorpay account (to take payments)
 
 ## Production Checklist
 
@@ -13,17 +13,16 @@ You MUST provide the following in your production environment. The application w
 - `DATABASE_URL`
 - `REDIS_HOST`, `REDIS_PORT`
 - `JWT_SECRET`, `API_KEY_SECRET`, `PEPPER`
-- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+- Optional, to take payments: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
 
 ### 2. Database Migrations
 Migrations are the absolute canonical source of truth for the schema.
 - To execute safely in a clustered environment, run: `node scripts/migrate.js`
 - The migration script utilizes **PostgreSQL Advisory Locks** to prevent concurrent execution corruption.
 
-### 3. Stripe Webhooks
-Stripe is the sole source of truth for billing status.
-- Ensure the webhook endpoint is exposed at `https://yourdomain.com/webhook/stripe`.
-- The backend relies on standard raw-body signature verification `stripe.webhooks.constructEvent` to prevent payload forgery.
+### 3. Razorpay Webhook
+- In Razorpay Dashboard → Webhooks, add `https://<your-backend>/webhook/razorpay` with the events `payment.captured` and `order.paid`, and a secret; put the same secret in `RAZORPAY_WEBHOOK_SECRET`.
+- Every webhook is checked with HMAC-SHA256 over the raw body. Payments are also confirmed against Razorpay's API before a plan is given, and each order can only be fulfilled once.
 
 ### 4. Application Protection
 - The Node.js application is intentionally restricted. You **must** deploy this application behind a reverse proxy (e.g., Nginx, AWS ALB, Cloudflare).

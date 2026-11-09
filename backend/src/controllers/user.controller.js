@@ -6,33 +6,22 @@ const ApiKeyService = require('../services/apiKey.service');
 const UsageService = require('../services/usage.service');
 const RateLimitService = require('../services/rateLimit.service');
 const AuthService = require('../services/auth.service');
-const { getRedis, KEYS, TTL } = require('../config/redis');
+const Billing = require('../services/billing.service');
+const Razorpay = require('../services/razorpay.service');
+const Wallet = require('../services/wallet.service');
+const { applyPlanChange, invalidateUserCaches } = require('../services/plan.service');
+const { hasActivePaidPlan } = require('../utils/plan');
 const { PLANS } = require('../utils/constants');
 const logger = require('../utils/logger');
 
 const PLAN_ORDER = { free: 0, pro: 1, premium: 2 };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// FIX: placeholders like "sk_live_xxxxx" used to pass the old check
-// (which only rejected the exact string "sk_test_placeholder"), so Stripe
-// was initialised with a junk key and checkout 500'd instead of 501.
-const isRealStripeKey = (key) =>
-  typeof key === 'string' &&
-  /^sk_(test|live)_[A-Za-z0-9]{20,}$/.test(key) &&
-  !/x{4,}|placeholder/i.test(key);
-
-let stripe = null;
-try {
-  if (isRealStripeKey(process.env.STRIPE_SECRET_KEY)) {
-    stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  }
-} catch (e) { /* stripe not configured */ }
-
-// While true, /select-plan upgrades for free (beta). Set
-// BETA_FREE_UPGRADES=false once you start charging — upgrades then require
-// Stripe checkout and /select-plan can only be used to downgrade.
+// Free upgrades are OFF unless BETA_FREE_UPGRADES=true is set explicitly.
+// With them off, upgrading goes through Razorpay and /select-plan can only
+// be used to move down to the free plan.
 const freeUpgradesEnabled = () =>
-  String(process.env.BETA_FREE_UPGRADES ?? 'true').toLowerCase() !== 'false';
+  String(process.env.BETA_FREE_UPGRADES ?? 'false').toLowerCase() === 'true';
 
 // node-pg parses a DATE column as local midnight, so compare using LOCAL
 // date parts. (The old version did String(date).slice(0, 10), which gives
@@ -44,27 +33,6 @@ const getCurrentSwitchCount = (user) => {
   const today = localYmd(new Date());
   const resetDate = user.switch_reset_at ? localYmd(new Date(user.switch_reset_at)) : today;
   return resetDate < today ? 0 : user.api_switch_count;
-};
-
-const invalidateUserCaches = async (userId) => {
-  const redis = getRedis();
-  await Promise.allSettled([
-    redis.del(KEYS.userCache(userId)),
-    redis.del(`user:${userId}:plan`),
-    redis.del(KEYS.userApisCache(userId)),
-    ApiKeyService.invalidateUserKeys(userId),
-  ]);
-};
-
-/**
- * Single place that changes a user's plan. Always re-syncs API grants so a
- * downgrade (manual, or Stripe cancellation) removes paid-tier access.
- */
-const applyPlanChange = async (userId, plan) => {
-  const updatedUser = await UserModel.updatePlan(userId, plan);
-  await ApiModel.syncAccessForPlan(userId, plan, PLANS[plan]?.apiSlots);
-  await invalidateUserCaches(userId);
-  return updatedUser;
 };
 
 const withPlanFlags = (apis, userApis, plan) => {
@@ -98,10 +66,9 @@ const UserController = {
       const planConfig = PLANS[plan];
       const allApisWithFlags = withPlanFlags(allApis, userApis, plan);
 
-      const safeUser = { ...req.user };
-      delete safeUser.stripe_customer_id;
-      delete safeUser.stripe_subscription_id;
-      delete safeUser.stripe_price_id;
+      const safeUser = { ...req.user, paid: hasActivePaidPlan(req.user) };
+      delete safeUser.password_hash;
+      delete safeUser.google_sub;
 
       const dashboard = {
         user: { ...safeUser, planConfig },
@@ -164,36 +131,23 @@ const UserController = {
 
       const isUpgrade = (PLAN_ORDER[plan] ?? 0) > (PLAN_ORDER[currentUser.plan] ?? 0);
 
-      // FIX: when free upgrades are off, upgrades must go through Stripe.
+      // When free upgrades are off, upgrades must go through Razorpay.
       if (isUpgrade && !freeUpgradesEnabled()) {
         return res.status(402).json({
           success: false,
           error: 'Upgrades require payment. Please complete checkout.',
           checkoutRequired: true,
-          checkoutAvailable: !!stripe,
+          checkoutAvailable: Razorpay.isConfigured(),
         });
       }
 
-      // FIX: a user with a live Stripe subscription who moves to free via
-      // this route used to keep being billed. Cancel it first.
-      if (
-        plan === 'free' &&
-        stripe &&
-        currentUser.stripe_subscription_id &&
-        ['active', 'trialing', 'past_due'].includes(currentUser.billing_status)
-      ) {
-        try {
-          await stripe.subscriptions.cancel(currentUser.stripe_subscription_id);
-          await UserModel.updateStripeSubscription(
-            userId, currentUser.stripe_subscription_id, 'canceled', currentUser.stripe_price_id
-          );
-        } catch (err) {
-          logger.error('Failed to cancel Stripe subscription on downgrade', { userId, error: err.message });
-          return res.status(502).json({
-            success: false,
-            error: 'Could not cancel your subscription. Please try again.',
-          });
-        }
+      // Moving between paid plans without paying would hand out the
+      // difference for free; paid time is bought per plan through checkout.
+      if (!isUpgrade && plan !== 'free' && hasActivePaidPlan(currentUser)) {
+        return res.status(400).json({
+          success: false,
+          error: 'You can switch to the free plan, or buy another plan through checkout.',
+        });
       }
 
       const updatedUser = await applyPlanChange(userId, plan);
@@ -214,7 +168,6 @@ const UserController = {
         },
         token: tokenResult.token,
         planFeatures: PLANS[plan],
-        isStripe: false,
       });
     } catch (err) {
       logger.error('Select plan error', { error: err.message, stack: err.stack });
@@ -247,16 +200,24 @@ const UserController = {
           alphaVantageCallsPerMin: planData.alphaVantageCallsPerMin || 5,
           yahooFinanceCallsPerMin: planData.yahooFinanceCallsPerMin || 10,
           llmModels: planData.llmModels || [],
+          priceInr: planKey === 'free' ? 0 : Billing.priceInr(planKey),
+          days: planKey === 'free' ? null : Billing.PLAN_DAYS,
         };
       });
 
+      const payments = freeUpgradesEnabled() ? 'beta' : Razorpay.isConfigured() ? 'razorpay' : 'off';
       res.json({
         success: true,
         currentPlan,
+        planExpiresAt: req.user?.plan_expires_at || null,
+        payments,
         plans,
-        upgradeMessage: freeUpgradesEnabled()
-          ? 'Select a plan to upgrade. No payment required during beta!'
-          : 'Upgrade through secure checkout.',
+        upgradeMessage:
+          payments === 'beta'
+            ? 'Select a plan to upgrade. No payment required during beta!'
+            : payments === 'razorpay'
+              ? `Pay once for ${Billing.PLAN_DAYS} days. No auto-renewal.`
+              : 'Paid plans are not available yet.',
       });
     } catch (err) {
       logger.error('Get plans error', { error: err.message });
@@ -411,151 +372,108 @@ const UserController = {
     }
   },
 
-  // ==================== STRIPE CHECKOUT ====================
-  createCheckoutSession: async (req, res) => {
-    // FIX: the route's validator ran but its result was never checked here.
+  // ==================== RAZORPAY CHECKOUT ====================
+  // Step 1: create an order. The browser opens Razorpay Checkout with it.
+  createCheckout: async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ success: false, errors: errors.array() });
     }
-    if (!['pro', 'premium'].includes(req.body.plan)) {
-      return res.status(400).json({ success: false, error: 'Checkout is only available for pro or premium' });
-    }
-
     try {
-      const { plan } = req.body;
-
-      if (!stripe) {
-        return res.status(501).json({
-          success: false,
-          error: 'Payments are not configured yet.',
-        });
-      }
-
-      const planPrices = {
-        pro: process.env.STRIPE_PRICE_ID_PRO,
-        premium: process.env.STRIPE_PRICE_ID_PREMIUM,
-      };
-
-      if (!planPrices[plan]) {
-        return res.status(400).json({ success: false, error: 'Invalid plan or missing Stripe price ID' });
-      }
-
-      const frontendUrl = process.env.FRONTEND_URL;
-      if (!frontendUrl) {
-        logger.error('FRONTEND_URL not set — cannot build checkout redirect URLs');
-        return res.status(500).json({ success: false, error: 'Checkout is misconfigured' });
-      }
-
       const user = await UserModel.findById(req.user.id);
-      let customerId = user.stripe_customer_id;
-
-      if (!customerId) {
-        const customer = await stripe.customers.create({
-          email: user.email,
-          metadata: { userId: user.id },
-        });
-        customerId = customer.id;
-        await UserModel.updateStripeCustomer(user.id, customerId);
-      }
-
-      const session = await stripe.checkout.sessions.create({
-        customer: customerId,
-        payment_method_types: ['card'],
-        line_items: [{ price: planPrices[plan], quantity: 1 }],
-        mode: 'subscription',
-        success_url: `${frontendUrl}/dashboard?checkout_success=true&plan=${plan}`,
-        cancel_url: `${frontendUrl}/dashboard?checkout_canceled=true`,
-        client_reference_id: req.user.id,
-        metadata: { userId: req.user.id, plan },
-        // FIX: metadata on the session does NOT propagate to the
-        // subscription, so the webhook could never read userId from it.
-        subscription_data: { metadata: { userId: req.user.id, plan } },
-      });
-
-      res.json({ success: true, url: session.url });
+      if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+      const checkout = await Billing.createCheckout(user, req.body.plan);
+      res.json({ success: true, checkout });
     } catch (err) {
-      logger.error('Checkout error', { error: err.message });
-      res.status(500).json({ success: false, error: 'Failed to create checkout session' });
+      if (!err.statusCode) logger.error('Checkout error', { error: err.message });
+      res.status(err.statusCode || 500).json({ success: false, error: err.statusCode ? err.message : 'Failed to start checkout' });
     }
   },
 
-  stripeWebhook: async (req, res) => {
-    const sig = req.headers['stripe-signature'];
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-    if (!sig || !endpointSecret || !stripe) {
-      logger.error('Missing Stripe signature, webhook secret, or SDK');
-      return res.status(400).send('Webhook Error: Missing configuration');
+  // Step 2: Checkout succeeded in the browser. Check it and give the plan.
+  verifyCheckout: async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
     }
+    try {
+      const { orderId, paymentId, signature } = req.body;
+      const result = await Billing.verifyCheckout(req.user, { orderId, paymentId, signature });
+      const tokenResult = await AuthService.refreshToken(req.user.id);
+      const user = await UserModel.findById(req.user.id);
+      res.json({
+        success: true,
+        kind: result.kind === 'credits' ? 'credits' : 'plan',
+        plan: user.plan,
+        planExpiresAt: user.plan_expires_at,
+        balancePaise: await Wallet.balance(req.user.id),
+        alreadyPaid: !!result.alreadyPaid,
+        token: tokenResult.token,
+      });
+    } catch (err) {
+      if (!err.statusCode) logger.error('Checkout verify error', { error: err.message });
+      res.status(err.statusCode || 500).json({ success: false, error: err.statusCode ? err.message : 'Could not confirm the payment' });
+    }
+  },
 
+  // ==================== WALLET (AI credits) ====================
+  getWallet: async (req, res) => {
+    try {
+      const [balancePaise, transactions] = await Promise.all([
+        Wallet.balance(req.user.id),
+        Wallet.history(req.user.id, 20),
+      ]);
+      res.json({
+        success: true,
+        balancePaise,
+        minBalancePaise: Wallet.minBalancePaise(),
+        topup: { minInr: Billing.TOPUP_MIN_INR, maxInr: Billing.TOPUP_MAX_INR, presetsInr: [100, 250, 500, 1000] },
+        payments: Razorpay.isConfigured() ? 'razorpay' : 'off',
+        transactions,
+      });
+    } catch (err) {
+      logger.error('Wallet error', { error: err.message });
+      res.status(500).json({ success: false, error: 'Failed to load wallet' });
+    }
+  },
+
+  createTopup: async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+    try {
+      const user = await UserModel.findById(req.user.id);
+      if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+      const checkout = await Billing.createTopup(user, req.body.amountInr);
+      res.json({ success: true, checkout });
+    } catch (err) {
+      if (!err.statusCode) logger.error('Top-up error', { error: err.message });
+      res.status(err.statusCode || 500).json({ success: false, error: err.statusCode ? err.message : 'Failed to start the top-up' });
+    }
+  },
+
+  // Razorpay → us. Mounted with a raw body (the signature covers the exact bytes).
+  razorpayWebhook: async (req, res) => {
+    const signature = req.headers['x-razorpay-signature'];
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+    if (!Razorpay.verifyWebhookSignature(raw, signature)) {
+      logger.warn('Razorpay webhook with a bad or missing signature', { ip: req.ip });
+      return res.status(400).json({ success: false, error: 'Invalid signature' });
+    }
     let event;
     try {
-      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-    } catch (err) {
-      logger.error('Webhook signature verification failed', { error: err.message });
-      return res.status(400).send('Webhook Error: Invalid signature');
+      event = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return res.status(400).json({ success: false, error: 'Invalid body' });
     }
-
-    // FIX: the idempotency key used to be written BEFORE processing, so if
-    // processing failed, Stripe's retry was skipped forever. Now the key is
-    // released on failure. If Redis itself is down we still process —
-    // plan updates are idempotent.
-    const redis = getRedis();
-    const idempotencyKey = KEYS.webhookEvent(event.id);
-    let claimed = true;
     try {
-      claimed = !!(await redis.set(idempotencyKey, '1', 'NX', 'EX', TTL.ONE_WEEK));
-    } catch (err) {
-      logger.warn('Webhook idempotency check unavailable, processing anyway', { error: err.message });
-    }
-
-    if (!claimed) {
-      logger.info(`Webhook event ${event.id} already processed. Skipping.`);
-      return res.json({ received: true });
-    }
-
-    try {
-      const subscriptionEvents = [
-        'customer.subscription.updated',
-        'customer.subscription.created',
-        'customer.subscription.deleted',
-      ];
-
-      if (subscriptionEvents.includes(event.type)) {
-        const subscription = event.data.object;
-        const customerId = subscription.customer;
-        const status = event.type === 'customer.subscription.deleted' ? 'canceled' : subscription.status;
-        const priceId = subscription.items?.data?.[0]?.price?.id || null;
-
-        let plan = 'free';
-        if (status === 'active' || status === 'trialing') {
-          if (priceId === process.env.STRIPE_PRICE_ID_PRO) plan = 'pro';
-          if (priceId === process.env.STRIPE_PRICE_ID_PREMIUM) plan = 'premium';
-        }
-
-        let userId = subscription.metadata?.userId;
-        if (!userId) {
-          const db = require('../config/db');
-          const userRes = await db.query('SELECT id FROM users WHERE stripe_customer_id = $1', [customerId]);
-          if (userRes.rows.length > 0) userId = userRes.rows[0].id;
-        }
-
-        if (userId) {
-          await UserModel.updateStripeSubscription(userId, subscription.id, status, priceId);
-          // FIX: cancellations now also revoke paid-tier API grants.
-          await applyPlanChange(userId, plan);
-          logger.info('Stripe subscription synced', { userId, plan, status });
-        } else {
-          logger.warn(`Stripe webhook: User not found for customer ${customerId}`);
-        }
-      }
-
+      await Billing.handleWebhook(event);
       res.json({ received: true });
     } catch (err) {
-      await redis.del(idempotencyKey).catch(() => {});
-      logger.error('Webhook error', { error: err.message, stack: err.stack });
-      res.status(500).send('Webhook Error: Internal failure');
+      // 5xx makes Razorpay retry later; confirming is idempotent.
+      logger.error('Razorpay webhook failed', { event: event?.event, error: err.message });
+      res.status(500).json({ received: false });
     }
   },
 };

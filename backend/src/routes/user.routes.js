@@ -1,5 +1,6 @@
 // backend/src/routes/user.routes.js
 const express  = require('express');
+const rateLimit = require('express-rate-limit');
 const { body } = require('express-validator');
 const { jwtAuth } = require('../middleware/auth.middleware');
 const UserController = require('../controllers/user.controller');
@@ -31,10 +32,39 @@ router.post('/apis/select',
 );
 router.delete('/apis/:apiId', UserController.deselectApi);
 
-// ── Plan Upgrade (Stripe - Optional) ──────────────────────────
-router.post('/checkout', 
-  [body('plan').isIn(['free', 'pro', 'premium'])], 
-  UserController.createCheckoutSession
+// ── Paid plans (Razorpay) ─────────────────────────────────────
+// Each checkout creates a Razorpay order; cap it so nobody can flood your
+// Razorpay account with orders (per user, not per IP).
+const checkoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `checkout:${req.user.id}`,
+  message: { success: false, error: 'Too many checkout attempts. Please wait a few minutes.' },
+});
+
+router.post('/checkout',
+  checkoutLimiter,
+  [body('plan').isIn(['pro', 'premium']).withMessage('Choose the pro or premium plan')],
+  UserController.createCheckout
+);
+router.post('/checkout/verify',
+  checkoutLimiter,
+  [
+    body('orderId').isString().matches(/^order_[A-Za-z0-9]{6,40}$/),
+    body('paymentId').isString().matches(/^pay_[A-Za-z0-9]{6,40}$/),
+    body('signature').isString().isHexadecimal().isLength({ min: 64, max: 64 }),
+  ],
+  UserController.verifyCheckout
+);
+
+// ── Wallet (prepaid AI credits) ───────────────────────────────
+router.get('/wallet', UserController.getWallet);
+router.post('/wallet/topup',
+  checkoutLimiter,
+  [body('amountInr').isInt({ min: 50, max: 10000 }).toInt().withMessage('Add between ₹50 and ₹10,000')],
+  UserController.createTopup
 );
 
 // ── API Key Management ────────────────────────────────────────

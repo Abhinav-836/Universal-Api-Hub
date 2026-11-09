@@ -109,7 +109,7 @@ const ApiModel = {
    *  - premium: grant every active API.
    *  - free/pro: remove APIs above the plan's tier, then trim to maxSlots
    *    (keeping the oldest grants).
-   * Called on every plan change (manual or Stripe webhook) so downgrades
+   * Called on every plan change (manual, payment or expiry) so downgrades
    * can never keep paid-tier access.
    */
   syncAccessForPlan: async (userId, plan, maxSlots) => {

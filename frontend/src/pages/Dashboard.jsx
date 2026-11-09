@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { DashboardBodySkeleton } from '../components/ui/Skeleton';
 import { useAuth } from '../context/AuthContext';
 import { dashboardService, planService } from '../services/auth';
 import StatsCards from '../components/dashboard/StatsCards';
 import { DailyUsageChart, ApiBreakdownChart, UsageRing } from '../components/dashboard/UsageChart';
 import ApiKeyManager from '../components/dashboard/ApiKeyManager';
+import WalletCard from '../components/dashboard/WalletCard';
 import RecentRequests from '../components/dashboard/RecentRequests';
 import { ToastContainer, useToast } from '../components/ui/Toast';
+import UpgradeModal from '../components/UpgradeModal';
 import { PLANS } from '../utils/constants';
 import { RefreshCw, Crown, X, Layers, Terminal } from 'lucide-react';
 import api from '../services/api';
@@ -88,7 +89,7 @@ function MiniPlayground({ userApiKey }) {
         ? await api.post(url, parsedBody, { headers })
         : await api.get(url, { headers });
       setEl(Date.now() - t0);
-      setRes({ data: res.data, status: res.status });
+      setRes({ data: res.data, status: res.status, costInr: res.headers?.['x-cost-inr'] || null });
     } catch (err) {
       setEl(Date.now() - t0);
       setRes({ error: err.response?.data || err.message, status: err.response?.status });
@@ -178,6 +179,11 @@ function MiniPlayground({ userApiKey }) {
                 {response.status}
               </span>
             )}
+            {response.costInr && (
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded text-emerald-300 bg-emerald-900/30" title="Charged to your AI credits">
+                ₹{response.costInr}
+              </span>
+            )}
             {response.data?.source && (
               <span
                 className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${response.data.source === 'mock' ? 'text-amber-300 bg-amber-900/30' : 'text-slate-400 bg-white/5'}`}
@@ -199,49 +205,10 @@ function MiniPlayground({ userApiKey }) {
   );
 }
 
-function UpgradeModal({ plan, onClose, onUpgrade, busy }) {
-  const opts = [
-    { key: 'pro', label: 'Pro', price: 'Free Beta', limit: '50 req/day, 8 APIs', color: 'from-brand-600 to-indigo-600' },
-    { key: 'premium', label: 'Premium', price: 'Free Beta', limit: '200 req/day, all APIs', color: 'from-purple-600 to-pink-600' },
-  ].filter((o) => o.key !== plan);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md card-glass rounded-2xl p-6 shadow-2xl animate-scale-in">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display font-bold text-white">Upgrade Your Plan</h2>
-          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-white transition-colors">
-            <X size={18} />
-          </button>
-        </div>
-        <p className="text-xs text-slate-400 mb-4">✨ All plans are currently FREE during beta!</p>
-        <div className="space-y-3">
-          {opts.map((o) => (
-            <div key={o.key} className="rounded-xl p-4 border border-white/10 hover:border-brand-500/30 flex items-center justify-between transition-all">
-              <div>
-                <p className="font-bold text-white">{o.label}</p>
-                <p className="text-xs text-slate-400">{o.price} · {o.limit}</p>
-              </div>
-              <button
-                onClick={() => onUpgrade(o.key)}
-                disabled={!!busy}
-                className={`px-4 py-2 rounded-xl bg-gradient-to-r ${o.color} text-white text-sm font-semibold hover:opacity-90 flex items-center gap-1.5 disabled:opacity-60`}
-              >
-                <Crown size={13} /> {busy === o.key ? 'Working…' : 'Select Plan'}
-              </button>
-            </div>
-          ))}
-          <p className="text-center text-xs text-slate-500 pt-1">No payment required during beta</p>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function Dashboard() {
   const { user, forceRefresh } = useAuth();
   const { toasts, show: showToast, remove } = useToast();
-  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [upgradeModal, setUpgradeModal] = useState(false);
@@ -273,29 +240,19 @@ export default function Dashboard() {
     load();
   }, [load]);
 
-  // Returning from Stripe checkout
-  useEffect(() => {
-    if (searchParams.get('checkout_success')) {
-      showToast('Payment received — your plan will update in a few seconds.');
-      setTimeout(() => { forceRefresh(); load(); }, 3000);
-      setSearchParams({}, { replace: true });
-    } else if (searchParams.get('checkout_canceled')) {
-      showToast('Checkout canceled', 'warning');
-      setSearchParams({}, { replace: true });
-    }
-  }, [searchParams, setSearchParams, showToast, forceRefresh, load]);
-
   const handleUpgrade = async (targetPlan) => {
     setUpgradeBusy(targetPlan);
     try {
       const result = await planService.selectPlan(targetPlan);
-      if (result?.redirecting) return; // going to Stripe checkout
-      showToast(`🎉 Upgraded to ${targetPlan} plan successfully!`);
+      showToast(result?.paid
+        ? `🎉 Payment received. You're on ${targetPlan} until ${new Date(result.planExpiresAt).toLocaleDateString()}.`
+        : `🎉 Upgraded to ${targetPlan} plan successfully!`);
       await forceRefresh();
       await load();
       setUpgradeModal(false);
     } catch (err) {
-      showToast(err.response?.data?.error || 'Upgrade failed. Please try again.', 'error');
+      if (err?.cancelled) showToast('Payment cancelled — you were not charged.', 'warning');
+      else showToast(err.response?.data?.error || err.message || 'Upgrade failed. Please try again.', 'error');
     } finally {
       setUpgradeBusy('');
     }
@@ -328,6 +285,8 @@ export default function Dashboard() {
   // (refresh, remove API, upgrade), unmounting the API-keys panel and
   // wiping a freshly created key before the user could copy it.
   const showSkeleton = loading && !data;
+  // Paid plans run for 30 days; the dashboard response has the end date.
+  const planEndsAt = data?.dashboard?.user?.plan_expires_at || user?.plan_expires_at || null;
 
   return (
     <div className="min-h-screen bg-surface-950 relative z-10">
@@ -340,6 +299,9 @@ export default function Dashboard() {
             <p className="text-slate-400 text-sm">
               Welcome back, <span className="text-white font-medium">{user?.username}</span> ·{' '}
               <span className="font-semibold text-brand-300">{planCfg.name} plan</span>
+              {planEndsAt && plan !== 'free' && (
+                <span className="text-slate-500"> · until {new Date(planEndsAt).toLocaleDateString()}</span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -367,6 +329,8 @@ export default function Dashboard() {
         ) : (
           <div className="space-y-6">
             <StatsCards stats={stats} />
+
+            <WalletCard onToast={showToast} />
 
             <div className="grid lg:grid-cols-3 gap-6">
               <div className="card-glass rounded-2xl p-5 flex flex-col items-center justify-center">

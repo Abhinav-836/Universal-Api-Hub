@@ -7,6 +7,112 @@ const logger = require('../utils/logger');
 const DEFAULT_NEWS_BASE_URL = (process.env.NEWS_API_BASE_URL || 'https://newsapi.org/v2').replace(/\/$/, '');
 const USER_MINUTE_LIMIT = 10;
 
+// ── Provider ────────────────────────────────────────────────────
+// NewsAPI's free "Developer" plan may only be used for development, not in
+// production, so it is used ONLY when NEWS_PROVIDER=newsapi is set (meaning
+// you have a paid NewsAPI plan). Otherwise headlines come from GDELT: open
+// data, no key, free for any use, but limited to one request every 5
+// seconds per server — hence the long cache and the request spacing below.
+const provider = () =>
+  String(process.env.NEWS_PROVIDER || 'gdelt').toLowerCase() === 'newsapi' && process.env.NEWS_API_KEY
+    ? 'newsapi'
+    : 'gdelt';
+
+const GDELT_URL = 'https://api.gdeltproject.org/api/v2/doc/doc';
+const GDELT_GAP_MS = 5500;      // GDELT asks for at most one request per 5 s
+const GDELT_MAX_WAIT_MS = 20000; // give up (503) rather than queue longer than this
+const GDELT_CACHE_SECONDS = 15 * 60;
+
+const CATEGORY_TERMS = {
+  business: 'business', technology: 'technology', sports: 'sports', health: 'health',
+  science: 'science', entertainment: 'entertainment', general: null,
+};
+// GDELT filters by country name; ISO codes for the common ones.
+const COUNTRY_NAMES = {
+  us: 'unitedstates', in: 'india', gb: 'unitedkingdom', uk: 'unitedkingdom', au: 'australia',
+  ca: 'canada', de: 'germany', fr: 'france', jp: 'japan', cn: 'china', br: 'brazil',
+  sg: 'singapore', ae: 'unitedarabemirates', za: 'southafrica', nz: 'newzealand', ie: 'ireland',
+};
+
+let gdeltNextSlot = 0;
+/** Wait for our turn so requests to GDELT are at least GDELT_GAP_MS apart. */
+async function gdeltTurn() {
+  const now = Date.now();
+  const at = Math.max(now, gdeltNextSlot);
+  if (at - now > GDELT_MAX_WAIT_MS) {
+    throw Object.assign(new Error('News is busy right now. Please retry in a few seconds.'), {
+      statusCode: 503,
+      retryAfter: Math.ceil((at - now) / 1000),
+    });
+  }
+  gdeltNextSlot = at + GDELT_GAP_MS;
+  if (at > now) await new Promise((r) => setTimeout(r, at - now));
+}
+
+const cleanTerms = (q) =>
+  String(q || '')
+    .replace(/[^\p{L}\p{N}\s.-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100);
+
+function gdeltQuery({ q, category, country }) {
+  const parts = [];
+  const terms = cleanTerms(q);
+  if (terms) parts.push(terms.includes(' ') ? `"${terms}"` : terms);
+  const cat = CATEGORY_TERMS[String(category || '').toLowerCase()];
+  if (cat) parts.push(cat);
+  if (!parts.length) parts.push('news');
+  const c = COUNTRY_NAMES[String(country || '').toLowerCase()];
+  if (c) parts.push(`sourcecountry:${c}`);
+  parts.push('sourcelang:english');
+  return parts.join(' ');
+}
+
+// "20261109T083000Z" → ISO
+const gdeltDate = (s) => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(String(s || ''));
+  return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z` : null;
+};
+
+async function fetchGdelt({ q, category, country, pageSize, page }) {
+  await gdeltTurn();
+  const want = Math.min(100, Math.max(1, pageSize) * Math.max(1, page));
+  const { data } = await axios.get(GDELT_URL, {
+    params: { query: gdeltQuery({ q, category, country }), mode: 'artlist', format: 'json', maxrecords: want, sort: 'datedesc', timespan: '3d' },
+    timeout: 10000,
+    responseType: 'text',
+    transformResponse: (x) => x,
+  });
+  let body;
+  try {
+    body = JSON.parse(data);
+  } catch {
+    // GDELT answers in plain text when it's throttling or the query is odd.
+    if (/limit requests/i.test(String(data))) {
+      gdeltNextSlot = Date.now() + 10000;
+      throw Object.assign(new Error('News is busy right now. Please retry in a few seconds.'), { statusCode: 503 });
+    }
+    body = { articles: [] };
+  }
+  const all = (body.articles || []).filter((a) => a.title && a.url);
+  const slice = all.slice((Math.max(1, page) - 1) * pageSize, Math.max(1, page) * pageSize);
+  return {
+    source: 'gdelt',
+    totalResults: all.length,
+    articles: slice.map((a) => ({
+      id: a.url,
+      title: a.title,
+      description: null,
+      source: a.domain || 'Unknown',
+      author: null,
+      url: a.url,
+      imageUrl: a.socialimage || null,
+      publishedAt: gdeltDate(a.seendate),
+    })),
+  };
+}
+
 async function checkUserMinuteLimit(userId) {
   if (!userId) return true;
   try {
@@ -37,35 +143,6 @@ const normalizeArticles = (articles = []) =>
       publishedAt: article.publishedAt,
     }));
 
-// Only used when NEWS_API_KEY is not configured (demo mode).
-const mockNews = ({ q, category, country, pageSize }) => {
-  const now = Date.now();
-  const base = [
-    ['Universal API Hub adds modular News API support', 'The new module supports cached headlines, scoped access, and weighted rate limits.', 'Universal API Hub Labs'],
-    [`Top ${category || 'general'} stories${q ? ` for "${q}"` : ''}`, 'Mock headlines are returned when no upstream news provider is configured.', 'Mock Wire'],
-    ['Global markets rally on strong earnings reports', 'Tech and energy sectors lead gains.', 'Mock Finance'],
-    ['Breakthrough in renewable energy storage announced', 'New battery chemistry promises higher capacity.', 'Mock Science'],
-    ['Championship finals draw record viewership', 'Underdogs advance past favorites.', 'Mock Sports'],
-  ];
-  const articles = base.slice(0, Math.max(1, pageSize || 5)).map(([title, description, source], i) => ({
-    id: `mock-news-${i + 1}`,
-    title,
-    description,
-    source,
-    author: null,
-    url: `https://example.com/news/${i + 1}`,
-    imageUrl: null,
-    publishedAt: new Date(now - i * 3600000).toISOString(),
-  }));
-  return {
-    source: 'mock',
-    notice: 'Demo data — no news provider is configured.',
-    query: { q: q || null, category: category || 'general', country, pageSize },
-    totalResults: articles.length,
-    articles,
-  };
-};
-
 const NewsService = {
   fetchHeadlines: async ({ userId, q, category, country = 'us', pageSize = 10, page = 1 }) => {
     if (!(await checkUserMinuteLimit(userId))) {
@@ -76,11 +153,8 @@ const NewsService = {
 
     const cachePayload = { q, category, country, pageSize, page };
 
-    if (!process.env.NEWS_API_KEY) {
-      return mockNews(cachePayload);
-    }
-
-    const cacheKey = buildCacheKey(cachePayload);
+    const which = provider();
+    const cacheKey = buildCacheKey({ ...cachePayload, provider: which });
     const redis = getRedis();
 
     try {
@@ -91,6 +165,23 @@ const NewsService = {
     }
 
     let payload;
+    if (which === 'gdelt') {
+      try {
+        const r = await fetchGdelt({ q, category, country, pageSize, page });
+        payload = { ...r, query: cachePayload };
+      } catch (err) {
+        if (err.statusCode === 503) throw err;
+        logger.error('GDELT request failed', { error: err.message, status: err.response?.status });
+        throw Object.assign(new Error('News provider is temporarily unavailable. Please retry shortly.'), { statusCode: 503 });
+      }
+      try {
+        await redis.set(cacheKey, JSON.stringify(payload), 'EX', GDELT_CACHE_SECONDS);
+      } catch (err) {
+        logger.warn('News cache write failed', { error: err.message });
+      }
+      return payload;
+    }
+
     try {
       const response = await axios.get(`${DEFAULT_NEWS_BASE_URL}/top-headlines`, {
         params: {
@@ -136,3 +227,4 @@ const NewsService = {
 };
 
 module.exports = NewsService;
+module.exports._internals = { gdeltQuery, gdeltDate, provider };

@@ -7,7 +7,7 @@ const ApiKeyModel = {
    */
   findByHash: async (keyHash) => {
     const result = await db.query(
-      `SELECT ak.*, u.plan, u.is_active as user_active
+      `SELECT ak.*, u.plan, u.plan_expires_at, u.is_active as user_active
        FROM api_keys ak
        JOIN users u ON ak.user_id = u.id
        WHERE ak.key_hash = $1

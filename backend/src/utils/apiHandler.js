@@ -2,6 +2,7 @@
 const UsageService = require('../services/usage.service');
 const RateLimitService = require('../services/rateLimit.service');
 const logger = require('./logger');
+const { runWithBilling } = require('./billingContext');
 
 /**
  * Wraps an API handler with usage logging and fair billing.
@@ -23,8 +24,17 @@ const withUsageLog = (handler) => async (req, res) => {
     return originalStatus(code);
   };
 
+  // Paid AI calls inside the handler are charged to this user's wallet; the
+  // total is reported in the X-Cost-INR header.
+  const billing = { userId: req.user?.id, endpoint: req.baseUrl ? `${req.baseUrl}${req.path}` : req.path };
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (billing.chargedPaise > 0 && !res.headersSent) res.set('X-Cost-INR', (billing.chargedPaise / 100).toFixed(2));
+    return originalJson(body);
+  };
+
   try {
-    await handler(req, res);
+    await runWithBilling(billing, () => handler(req, res));
   } catch (err) {
     capturedError = err;
     capturedStatus = err.statusCode || err.status || 500;

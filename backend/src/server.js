@@ -32,12 +32,18 @@ const start = async () => {
   if (!dbOk) {
     logger.warn('PostgreSQL not available — DB-dependent features will fail');
   } else {
-    // Google sign-in needs users.google_sub (migration 008); add it if missing.
+    // Columns/tables newer features need (migrations 008, 009); the host
+    // doesn't run migrations on deploy.
     try {
-      await require('./models/user.model').ensureGoogleColumn();
+      await require('./db/ensureSchema').ensureSchema();
     } catch (err) {
-      logger.warn('Could not add users.google_sub — Google sign-in will fail', { error: err.message });
+      logger.warn('Could not update the database schema', { error: err.message });
     }
+    // Paid plans that have run out go back to free: now, then every 15 min.
+    const Billing = require('./services/billing.service');
+    const expire = () => Billing.expirePlans().catch((err) => logger.warn('Plan expiry check failed', { error: err.message }));
+    expire();
+    setInterval(expire, 15 * 60 * 1000).unref();
   }
   if (!redisOk) {
     logger.warn('Redis not available — rate limiting and caching will be degraded');

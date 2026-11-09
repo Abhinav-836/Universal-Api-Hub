@@ -26,7 +26,29 @@ const allowedOrigins = [
   process.env.CORS_ORIGIN,
 ].filter(Boolean);
 
-app.use(cors({
+// The public API (/api/v1) is called with an API key, never cookies, so any
+// website may call it from the browser. Everything else (sign-in, dashboard,
+// billing) only answers our own frontend.
+const publicApiCors = cors({
+  origin: '*',
+  credentials: false,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-API-Key', 'Authorization', 'Accept'],
+  exposedHeaders: [
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Used',
+    'X-RateLimit-Reset',
+    'X-RateLimit-Warning',
+    'X-Data-Source',
+    'X-Cost-INR',
+    'Retry-After',
+  ],
+  maxAge: 600,
+  optionsSuccessStatus: 204,
+});
+
+const siteCors = cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
     if (allowedOrigins.indexOf(origin) !== -1 || !isProduction) {
@@ -52,11 +74,14 @@ app.use(cors({
     'X-RateLimit-Reset',
     'X-RateLimit-Warning',
     'X-Data-Source',
+    'X-Cost-INR',
     'Retry-After',
   ],
   preflightContinue: false,
   optionsSuccessStatus: 204,
-}));
+});
+
+app.use((req, res, next) => (req.path.startsWith('/api/v1/') ? publicApiCors : siteCors)(req, res, next));
 
 // ==================== SECURITY ====================
 app.use(helmet({
@@ -85,8 +110,8 @@ app.use(helmet({
   },
 }));
 
-// ==================== STRIPE WEBHOOK (raw body, before JSON parser) ====================
-app.post('/webhook/stripe', express.raw({ type: 'application/json' }), UserController.stripeWebhook);
+// ==================== RAZORPAY WEBHOOK (raw body, before JSON parser) ====================
+app.post('/webhook/razorpay', express.raw({ type: 'application/json', limit: '100kb' }), UserController.razorpayWebhook);
 
 // ==================== BODY PARSERS ====================
 const STRICT_JSON_LIMIT = '100kb';
@@ -167,12 +192,7 @@ app.use('/api/user', userRoutes);
 
 // ==================== 404 + ERRORS ====================
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Route not found',
-    path: req.path,
-    method: req.method,
-  });
+  res.status(404).json({ success: false, error: 'Route not found' });
 });
 
 app.use(errorHandler);

@@ -115,7 +115,7 @@ const apiKeyAuth = async (req, res, next) => {
     }
 
     req.apiKey = keyRecord;
-    req.user = { id: keyRecord.user_id, plan: keyRecord.plan };
+    req.user = { id: keyRecord.user_id, plan: keyRecord.plan, plan_expires_at: keyRecord.plan_expires_at };
 
     ApiKeyService.touchLastUsed(keyRecord.id).catch(() => {});
 

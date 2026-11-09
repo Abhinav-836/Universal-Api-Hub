@@ -7,15 +7,6 @@ const NO_PASSWORD = '!google';
 const UserModel = {
   NO_PASSWORD,
 
-  /**
-   * Adds users.google_sub if it's missing (same as migration 008). Run at
-   * startup because the host doesn't run migrations on deploy. Idempotent.
-   */
-  ensureGoogleColumn: async () => {
-    await db.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub VARCHAR(255)');
-    await db.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)');
-  },
-
   /** For Google sign-in: includes disabled accounts, so they can be refused clearly. */
   findForGoogle: async ({ googleSub, email }) => {
     const bySub = await db.query(
@@ -69,9 +60,8 @@ const UserModel = {
 
   findById: async (id) => {
     const result = await db.query(
-      `SELECT id, email, username, plan, api_switch_count, switch_reset_at,
-              is_active, created_at, stripe_customer_id, stripe_subscription_id,
-              stripe_price_id, billing_status
+      `SELECT id, email, username, plan, plan_expires_at, api_switch_count, switch_reset_at,
+              is_active, created_at
        FROM users WHERE id = $1`,
       [id]
     );
@@ -104,13 +94,14 @@ const UserModel = {
     return result.rows[0];
   },
 
-  updatePlan: async (userId, plan) => {
+  /** expiresAt: when paid time on this plan ends (null = no end date). */
+  updatePlan: async (userId, plan, expiresAt = null) => {
     const result = await db.query(
       `UPDATE users
-       SET plan = $1, updated_at = NOW()
+       SET plan = $1, plan_expires_at = $3, updated_at = NOW()
        WHERE id = $2
-       RETURNING id, email, username, plan, created_at`,
-      [plan, userId]
+       RETURNING id, email, username, plan, plan_expires_at, created_at`,
+      [plan, userId, expiresAt]
     );
     return result.rows[0] || null;
   },
@@ -143,25 +134,6 @@ const UserModel = {
     await db.query(
       'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
       [passwordHash, userId]
-    );
-  },
-
-  updateStripeCustomer: async (userId, stripeCustomerId) => {
-    await db.query(
-      'UPDATE users SET stripe_customer_id = $1, updated_at = NOW() WHERE id = $2',
-      [stripeCustomerId, userId]
-    );
-  },
-
-  updateStripeSubscription: async (userId, subscriptionId, status, priceId) => {
-    await db.query(
-      `UPDATE users
-       SET stripe_subscription_id = $1,
-           billing_status = $2,
-           stripe_price_id = $3,
-           updated_at = NOW()
-       WHERE id = $4`,
-      [subscriptionId, status, priceId, userId]
     );
   }
 };

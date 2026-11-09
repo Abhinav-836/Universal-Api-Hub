@@ -1,13 +1,15 @@
 // backend/src/controllers/llm.controller.js
 const LlmService = require('../services/llm.service');
 const { withUsageLog, markMock } = require('../utils/apiHandler');
+const Wallet = require('../services/wallet.service');
 
 // FIX: this handler used to catch every error and return 500 with the raw
 // upstream message. Errors now propagate to withUsageLog, which returns the
 // right status (503 for provider outages), hides internals, and refunds quota.
 const llmChatHandler = withUsageLog(async (req, res) => {
   const { message, system, temperature, maxTokens, model } = req.body;
-  const plan = req.user?.plan || 'free';
+  // Paid models only while the wallet has credit; each call is charged to it.
+  const plan = await Wallet.aiPlanFor(req.user);
 
   const result = await LlmService.chat({
     message,

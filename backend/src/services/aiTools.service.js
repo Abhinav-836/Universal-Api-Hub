@@ -200,11 +200,17 @@ function toImageDataUrl(imageBase64) {
 
 async function analyzeImage({ imageUrl, imageBase64, plan }) {
   const url = imageUrl || toImageDataUrl(imageBase64);
+  const visionModels = LlmService.getVisionModels(plan);
+  if (!visionModels.length) {
+    const err = new Error('Image analysis needs a paid Pro or Premium plan.');
+    err.statusCode = 402;
+    throw err;
+  }
 
   let result;
   try {
     result = await LlmService.completeJson({
-      models: LlmService.getVisionModels(),
+      models: visionModels,
       temperature: 0.2,
       maxTokens: 700,
       logContext: { tool: 'image-analyze', plan },
