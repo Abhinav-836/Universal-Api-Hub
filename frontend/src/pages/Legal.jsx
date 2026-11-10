@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { Zap } from 'lucide-react';
 
 const CONTACT = 'ashutoshabhinavbachra0009@gmail.com';
-const UPDATED = '9 November 2026';
+const UPDATED = '10 November 2026';
 
 function Shell({ title, children }) {
   return (
@@ -57,6 +57,7 @@ export function Privacy() {
         </li>
         <li><strong>AI credits:</strong> your credit balance and a record of each top-up and each paid AI call (time, endpoint, model, amount).</li>
         <li><strong>Billing:</strong> if you buy a plan or credits, Razorpay handles the payment. We keep the plan, amount, date and Razorpay&rsquo;s order and payment IDs, never your card, UPI or bank details.</li>
+        <li><strong>Visit statistics:</strong> Vercel Web Analytics counts page views and visitors to this website without cookies and without storing personal information.</li>
       </ul>
 
       <h2>Who else handles it</h2>
