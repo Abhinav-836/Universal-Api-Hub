@@ -38,7 +38,7 @@ export function Privacy() {
   return (
     <Shell title="Privacy policy">
       <p className="!mt-8">
-        Universal API Hub is a StrattonTrade product built by Abhinav Ashutosh. It gives developers one API key for
+        Universal API Hub is a Kavorin Tech product built by Abhinav Ashutosh. It gives developers one API key for
         many data and AI APIs. This page explains what we store and why. We don&rsquo;t sell your data or use it for
         advertising.
       </p>
@@ -91,7 +91,7 @@ export function Terms() {
   return (
     <Shell title="Terms of service">
       <p className="!mt-8">
-        These terms cover your use of Universal API Hub, a StrattonTrade product built by Abhinav Ashutosh. By creating
+        These terms cover your use of Universal API Hub, a Kavorin Tech product built by Abhinav Ashutosh. By creating
         an account or using an API key, you agree to them.
       </p>
 
@@ -195,7 +195,7 @@ export function Contact() {
       </p>
       <h2>Business</h2>
       <p>
-        Universal API Hub is a StrattonTrade product, run by Abhinav Ashutosh.
+        Universal API Hub is a Kavorin Tech product, run by Abhinav Ashutosh.
         <br />
         Bhubaneswar, Odisha, India
       </p>
