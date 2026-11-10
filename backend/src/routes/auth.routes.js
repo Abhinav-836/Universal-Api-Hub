@@ -37,7 +37,7 @@ router.post('/register',
   [
     authLimiter,
     body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
-    body('username').isAlphanumeric().isLength({ min: 3, max: 30 }).withMessage('Username must be 3-30 alphanumeric chars'),
+    body('username').matches(/^[A-Za-z0-9_]{3,30}$/).withMessage('Username must be 3-30 letters, numbers or underscores'),
     body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
       .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/).withMessage('Password must contain uppercase, lowercase, and number'),
   ],

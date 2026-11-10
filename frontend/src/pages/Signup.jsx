@@ -80,7 +80,8 @@ export default function Signup() {
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">Username</label>
               <input type="text" name="username" value={form.username} onChange={handleChange} required
-                placeholder="yourname" minLength={3} maxLength={30} pattern="[a-zA-Z0-9]+" className="input-base" />
+                placeholder="yourname" minLength={3} maxLength={30} pattern="[A-Za-z0-9_]+" title="3-30 letters, numbers or underscores" aria-describedby="username-hint" className="input-base" />
+              <p id="username-hint" className="mt-1 text-xs text-slate-400">3-30 letters, numbers or underscores.</p>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
