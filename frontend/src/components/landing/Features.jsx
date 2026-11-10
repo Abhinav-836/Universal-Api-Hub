@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Cloud, Newspaper, TrendingUp, Key, BarChart2, Shield, Headphones } from 'lucide-react';
+import { Bot, Cloud, Newspaper, TrendingUp, Key, BarChart2, Shield, Mail } from 'lucide-react';
 
 const FEATURES = [
   { icon: Bot,        title: 'AI & LLM APIs',         desc: 'Access state-of-the-art language models for chat, summarization, sentiment, and more.', color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/10' },
@@ -9,7 +9,7 @@ const FEATURES = [
   { icon: Key,        title: 'API Key Scoping',        desc: 'Create granular API keys scoped to specific endpoints, with expiry and type controls.', color: 'text-brand-400', bg: 'bg-brand-500/10' },
   { icon: BarChart2,  title: 'Usage Analytics',        desc: 'Track daily requests, cost weights, and per-endpoint breakdowns with beautiful charts.', color: 'text-violet-400', bg: 'bg-violet-500/10' },
   { icon: Shield,     title: 'Plan-Based Rate Limits', desc: 'Fair usage enforced per plan — upgrade anytime for higher throughput and more API slots.', color: 'text-rose-400', bg: 'bg-rose-500/10' },
-  { icon: Headphones, title: '24/7 Support',           desc: 'Priority support for Pro and Premium plans. We are here whenever you need us.', color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
+  { icon: Mail,       title: 'Real Email Support',     desc: 'Questions or problems? Email us and a real person replies within 2 working days.', color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
 ];
 
 export default function Features() {

@@ -41,7 +41,7 @@ export default function Hero() {
 
         {/* Social proof strip */}
         <div className="mt-14 flex flex-wrap items-center justify-center gap-8 text-xs text-slate-600 animate-fade-in" style={{ animationDelay: '0.4s' }}>
-          {['No credit card required', 'Open source friendly', 'Rate-limited & secure', 'GDPR compliant'].map((t) => (
+          {['No credit card required', 'Open source (MIT)', 'Rate-limited & secure', 'Data deleted on request'].map((t) => (
             <span key={t} className="flex items-center gap-1.5">
               <Zap size={11} className="text-brand-500" />{t}
             </span>
