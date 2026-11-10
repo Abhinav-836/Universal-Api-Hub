@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Zap, Github, Twitter } from 'lucide-react';
+import { Zap } from 'lucide-react';
 
 export default function Footer() {
   return (
@@ -18,23 +18,14 @@ export default function Footer() {
             <p className="text-sm text-slate-500 leading-relaxed max-w-xs">
               One platform to access, manage, and scale all your AI APIs. Built for developers.
             </p>
-            <div className="flex gap-3 mt-4">
-              <a href="#" className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 transition-all">
-                <Github size={16} />
-              </a>
-              <a href="#" className="p-2 rounded-lg bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 transition-all">
-                <Twitter size={16} />
-              </a>
-            </div>
           </div>
 
           {/* Links */}
           <div>
             <h4 className="font-display font-semibold text-white text-sm mb-3">Product</h4>
             <ul className="space-y-2">
-              {['Features', 'Pricing', 'Changelog', 'Status'].map((l) => (
-                <li key={l}><a href={`#${l.toLowerCase()}`} className="text-sm text-slate-500 hover:text-white transition-colors">{l}</a></li>
-              ))}
+              <li><a href="#features" className="text-sm text-slate-500 hover:text-white transition-colors">Features</a></li>
+              <li><a href="#pricing" className="text-sm text-slate-500 hover:text-white transition-colors">Pricing</a></li>
             </ul>
           </div>
 
