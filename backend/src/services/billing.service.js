@@ -10,6 +10,12 @@
 //      exactly the amount we asked for.
 // The webhook (payment.captured / order.paid) runs the same confirm step, so
 // a user who closes the tab right after paying still gets their plan.
+//
+// Paying twice is blocked at both ends:
+//   - start: clicking "Pay" again hands back the same open order (openOrder),
+//     and Razorpay takes only one payment per order;
+//   - finish: confirmPayment grants the plan / credits exactly once per order,
+//     however many times the browser and webhook call it.
 const crypto = require('crypto');
 const db = require('../config/db');
 const Razorpay = require('./razorpay.service');
@@ -38,33 +44,85 @@ function priceInr(plan) {
 
 const prices = () => ({ pro: priceInr('pro'), premium: priceInr('premium') });
 
+// How long an unpaid order is handed out again instead of making a new one.
+const REUSE_ORDER_MINUTES = 30;
+
+/**
+ * Get the Razorpay order for this purchase — the SAME order every time.
+ *
+ * Without this, every click on "Pay" made a new order, so a double click,
+ * a second tab, or "close the window and try again" while a UPI payment was
+ * still pending could charge the customer twice. Razorpay accepts only one
+ * successful payment per order, so handing back the open order makes a
+ * second charge impossible.
+ *
+ * A per-user database lock makes two clicks that arrive at the same moment
+ * wait for each other instead of both creating an order.
+ */
+async function openOrder(user, { kind, amount, receiptPrefix, notes }) {
+  const result = await db.withTransaction(async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`uah_pay:${user.id}`]);
+
+    const { rows } = await client.query(
+      `SELECT order_id FROM payments
+       WHERE user_id = $1 AND plan = $2 AND amount = $3 AND status = 'created'
+         AND created_at > NOW() - make_interval(mins => $4)
+       ORDER BY created_at DESC LIMIT 1`,
+      [user.id, kind, amount, REUSE_ORDER_MINUTES]
+    );
+    if (rows[0]) return { orderId: rows[0].order_id, reused: true };
+
+    let order;
+    try {
+      order = await Razorpay.createOrder({
+        amount,
+        currency: 'INR',
+        receipt: `${receiptPrefix}${crypto.randomBytes(8).toString('hex')}`,
+        notes: { userId: user.id, ...notes },
+      });
+    } catch (err) {
+      logger.error('Razorpay order failed', { status: err.response?.status, error: err.response?.data?.error?.description || err.message });
+      throw httpError(502, 'Could not start the payment. Please try again.');
+    }
+    await client.query(
+      `INSERT INTO payments (user_id, plan, amount, currency, order_id, status)
+       VALUES ($1, $2, $3, 'INR', $4, 'created')`,
+      [user.id, kind, amount, order.id]
+    );
+    return { orderId: order.id, reused: false };
+  });
+
+  // An order we hand out again may already be paid at Razorpay while our
+  // confirm step hasn't run yet (closed tab, slow UPI, late webhook). Finish
+  // that payment now and tell the customer, instead of asking them to pay again.
+  if (result.reused) {
+    let order = null;
+    try {
+      order = await Razorpay.fetchOrder(result.orderId);
+    } catch (err) {
+      // Can't check right now. Reusing is still safe: Razorpay refuses a
+      // second payment on an order that is already paid.
+      logger.warn('Could not check reused Razorpay order', { orderId: result.orderId, status: err.response?.status });
+    }
+    if (order?.status === 'paid') {
+      const items = await Razorpay.fetchOrderPayments(result.orderId).catch(() => []);
+      const captured = items.find((p) => p.status === 'captured');
+      if (captured) await confirmPayment({ orderId: result.orderId, paymentId: captured.id }).catch(() => {});
+      throw httpError(409, 'Your earlier payment for this already went through. Refresh the page to see it.', { alreadyPaid: true });
+    }
+  }
+  return result.orderId;
+}
+
 async function createCheckout(user, plan) {
   if (!PAID_PLANS.includes(plan)) throw httpError(400, 'Choose the pro or premium plan.');
   if (!Razorpay.isConfigured()) throw httpError(501, 'Payments are not set up yet.');
 
   const amount = priceInr(plan) * 100; // paise
-  const receipt = `uah_${crypto.randomBytes(8).toString('hex')}`;
-  let order;
-  try {
-    order = await Razorpay.createOrder({
-      amount,
-      currency: 'INR',
-      receipt,
-      notes: { userId: user.id, plan },
-    });
-  } catch (err) {
-    logger.error('Razorpay order failed', { status: err.response?.status, error: err.response?.data?.error?.description || err.message });
-    throw httpError(502, 'Could not start the payment. Please try again.');
-  }
-
-  await db.query(
-    `INSERT INTO payments (user_id, plan, amount, currency, order_id, status)
-     VALUES ($1, $2, $3, 'INR', $4, 'created')`,
-    [user.id, plan, amount, order.id]
-  );
+  const orderId = await openOrder(user, { kind: plan, amount, receiptPrefix: 'uah_', notes: { plan } });
 
   return {
-    orderId: order.id,
+    orderId,
     amount,
     currency: 'INR',
     keyId: Razorpay.publicKeyId(),
@@ -85,25 +143,9 @@ async function createTopup(user, amountInr) {
   }
   if (!Razorpay.isConfigured()) throw httpError(501, 'Payments are not set up yet.');
   const amount = rupees * 100;
-  let order;
-  try {
-    order = await Razorpay.createOrder({
-      amount,
-      currency: 'INR',
-      receipt: `uah_c_${crypto.randomBytes(8).toString('hex')}`,
-      notes: { userId: user.id, kind: CREDITS },
-    });
-  } catch (err) {
-    logger.error('Razorpay order failed', { status: err.response?.status, error: err.response?.data?.error?.description || err.message });
-    throw httpError(502, 'Could not start the payment. Please try again.');
-  }
-  await db.query(
-    `INSERT INTO payments (user_id, plan, amount, currency, order_id, status)
-     VALUES ($1, $2, $3, 'INR', $4, 'created')`,
-    [user.id, CREDITS, amount, order.id]
-  );
+  const orderId = await openOrder(user, { kind: CREDITS, amount, receiptPrefix: 'uah_c_', notes: { kind: CREDITS } });
   return {
-    orderId: order.id,
+    orderId,
     amount,
     currency: 'INR',
     keyId: Razorpay.publicKeyId(),

@@ -47,6 +47,16 @@ const RazorpayService = {
     return data; // { id: 'order_…', amount, currency, status, … }
   },
 
+  async fetchOrder(orderId) {
+    const { data } = await client().get(`/orders/${encodeURIComponent(orderId)}`);
+    return data; // { id, amount, amount_paid, status: created|attempted|paid, … }
+  },
+
+  async fetchOrderPayments(orderId) {
+    const { data } = await client().get(`/orders/${encodeURIComponent(orderId)}/payments`);
+    return data?.items || [];
+  },
+
   async fetchPayment(paymentId) {
     const { data } = await client().get(`/payments/${encodeURIComponent(paymentId)}`);
     return data; // { id, order_id, amount, currency, status: created|authorized|captured|failed|refunded, … }

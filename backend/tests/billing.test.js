@@ -14,8 +14,16 @@ const mockStore = { payments: [], users: [] };
 const mockDb = {
   query: jest.fn(async (sql, params = []) => {
     if (/^INSERT INTO payments/.test(sql)) {
-      mockStore.payments.push({ user_id: params[0], plan: params[1], amount: params[2], currency: 'INR', order_id: params[3], status: 'created', payment_id: null });
+      mockStore.payments.push({ user_id: params[0], plan: params[1], amount: params[2], currency: 'INR', order_id: params[3], status: 'created', payment_id: null, created_at: new Date() });
       return { rows: [] };
+    }
+    if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
+    if (/SELECT order_id FROM payments/.test(sql)) {
+      const cutoff = Date.now() - params[3] * 60 * 1000;
+      const open = mockStore.payments
+        .filter((p) => p.user_id === params[0] && p.plan === params[1] && p.amount === params[2] && p.status === 'created' && p.created_at.getTime() > cutoff)
+        .sort((a, b) => b.created_at - a.created_at);
+      return { rows: open.slice(0, 1).map((p) => ({ order_id: p.order_id })) };
     }
     if (/SELECT \* FROM payments WHERE order_id/.test(sql)) return { rows: mockStore.payments.filter((p) => p.order_id === params[0]).map((p) => ({ ...p })) };
     if (/UPDATE payments SET status = 'paid'/.test(sql)) {
@@ -42,7 +50,19 @@ const mockDb = {
     throw new Error(`unexpected SQL in test: ${sql.slice(0, 60)}`);
   }),
 };
-mockDb.withTransaction = jest.fn(async (fn) => fn({ query: mockDb.query }));
+// Transactions run one at a time, like the per-user advisory lock in Postgres.
+let mockTxChain = Promise.resolve();
+mockDb.withTransaction = jest.fn(async (fn) => {
+  const before = mockTxChain;
+  let release;
+  mockTxChain = new Promise((r) => { release = r; });
+  await before;
+  try {
+    return await fn({ query: mockDb.query });
+  } finally {
+    release();
+  }
+});
 jest.mock('../src/config/db', () => mockDb);
 
 jest.mock('axios');
@@ -204,6 +224,82 @@ describe('checkout and confirming a payment', () => {
     expect(Billing.priceInr('pro')).toBe(249);
     delete process.env.PRICE_PRO_INR;
     expect(Billing.prices()).toEqual({ pro: 199, premium: 499 });
+  });
+});
+
+describe('paying twice is impossible', () => {
+  // Each new Razorpay order gets its own id, so a second order would show up.
+  let n;
+  beforeEach(() => {
+    n = 0;
+    api.post.mockImplementation(async (url, body) => {
+      if (url === '/orders') return { data: { id: `order_NEW${++n}`, amount: body.amount, currency: 'INR' } };
+      throw new Error(`unexpected POST ${url}`);
+    });
+    api.get.mockImplementation(async (url) => {
+      if (/^\/orders\/[^/]+$/.test(url)) return { data: { id: url.split('/')[2], status: 'attempted' } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+  });
+  const ordersMade = () => api.post.mock.calls.filter(([url]) => url === '/orders').length;
+
+  it('clicking Pay twice for the same plan gives back the same order', async () => {
+    const a = await Billing.createCheckout({ id: 'u1' }, 'premium');
+    const b = await Billing.createCheckout({ id: 'u1' }, 'premium');
+    expect(b.orderId).toBe(a.orderId);
+    expect(ordersMade()).toBe(1);
+    expect(mockStore.payments).toHaveLength(1);
+  });
+
+  it('two tabs topping up the same amount at once share one order', async () => {
+    const [a, b] = await Promise.all([Billing.createTopup({ id: 'u1' }, 250), Billing.createTopup({ id: 'u1' }, 250)]);
+    expect(b.orderId).toBe(a.orderId);
+    expect(mockStore.payments).toHaveLength(1);
+    expect(mockDb.query).toHaveBeenCalledWith(expect.stringMatching(/pg_advisory_xact_lock/), ['uah_pay:u1']);
+  });
+
+  it('a different plan, a different amount or another user gets its own order', async () => {
+    await Billing.createCheckout({ id: 'u1' }, 'premium');
+    await Billing.createCheckout({ id: 'u1' }, 'pro');
+    await Billing.createTopup({ id: 'u1' }, 100);
+    await Billing.createTopup({ id: 'u1' }, 250);
+    await Billing.createCheckout({ id: 'u2' }, 'premium');
+    expect(ordersMade()).toBe(5);
+  });
+
+  it('after a payment is confirmed, buying again starts a fresh order', async () => {
+    const a = await Billing.createTopup({ id: 'u1' }, 250);
+    mockStore.payments[0].status = 'paid';
+    const b = await Billing.createTopup({ id: 'u1' }, 250);
+    expect(b.orderId).not.toBe(a.orderId);
+  });
+
+  it('an old unpaid order is not reused', async () => {
+    const a = await Billing.createCheckout({ id: 'u1' }, 'premium');
+    mockStore.payments[0].created_at = new Date(Date.now() - 31 * 60 * 1000);
+    const b = await Billing.createCheckout({ id: 'u1' }, 'premium');
+    expect(b.orderId).not.toBe(a.orderId);
+  });
+
+  it('if the open order was already paid at Razorpay, it finishes that payment instead of charging again', async () => {
+    const a = await Billing.createCheckout({ id: 'u1' }, 'premium');
+    api.get.mockImplementation(async (url) => {
+      if (url === `/orders/${a.orderId}`) return { data: { id: a.orderId, status: 'paid' } };
+      if (url === `/orders/${a.orderId}/payments`) return { data: { items: [{ id: 'pay_LATE1', status: 'captured' }] } };
+      if (url === '/payments/pay_LATE1') return { data: { id: 'pay_LATE1', order_id: a.orderId, amount: 49900, currency: 'INR', status: 'captured' } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+    await expect(Billing.createCheckout({ id: 'u1' }, 'premium')).rejects.toMatchObject({ statusCode: 409, alreadyPaid: true });
+    expect(ordersMade()).toBe(1);
+    expect(mockStore.payments[0].status).toBe('paid');
+    expect(mockStore.users[0].plan).toBe('premium');
+  });
+
+  it('if Razorpay cannot be reached, the same order is still handed back (Razorpay refuses a second payment on it)', async () => {
+    const a = await Billing.createCheckout({ id: 'u1' }, 'premium');
+    api.get.mockRejectedValue(Object.assign(new Error('timeout'), { response: { status: 503 } }));
+    const b = await Billing.createCheckout({ id: 'u1' }, 'premium');
+    expect(b.orderId).toBe(a.orderId);
   });
 });
 
